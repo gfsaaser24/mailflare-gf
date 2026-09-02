@@ -29,6 +29,13 @@
       "when": 1788388075643,
       "tag": "0003_organizations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788388775686,
+      "tag": "0004_domain_status",
+      "breakpoints": true
     }
   ]
 }

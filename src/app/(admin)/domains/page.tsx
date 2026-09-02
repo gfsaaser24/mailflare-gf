@@ -14,18 +14,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import {
-  Check,
-  X,
-  AlertTriangle,
-  ArrowRight,
-  Globe2,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { Plus } from "lucide-react";
 import { authFetch } from "@/lib/auth/client";
-import type { DnsRecord, DnsStatusSummary, Domain } from "./types";
+import type { DnsRecord, Domain } from "./types";
 import DomainItemCard from "./DomainItemCard";
 import { CardGridSkeleton } from "@/components/page-skeletons";
 
@@ -33,19 +24,19 @@ export default function DomainsPage() {
   const qc = useQueryClient();
   const [hostname, setHostname] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [reconcilingId, setReconcilingId] = useState<string | null>(null);
   const [dnsView, setDnsView] = useState<{
     domain: Domain;
     dns: unknown;
   } | null>(null);
 
+  // Status, dns_ok and last_checked_at come straight off the row; nothing here
+  // recomputes DNS. The reconciler owns those fields.
   const { data, isLoading } = useQuery({
     queryKey: ["domains"],
     queryFn: async () => {
-      const res = await authFetch("/api/domains?includeDns=true");
-      return (await res.json()) as {
-        domains: Domain[];
-        dns: Record<string, DnsStatusSummary>;
-      };
+      const res = await authFetch("/api/domains");
+      return (await res.json()) as { domains: Domain[] };
     },
   });
 
@@ -77,6 +68,22 @@ export default function DomainsPage() {
       if (!res.ok) throw new Error("Failed to remove");
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["domains"] }),
+  });
+
+  const reconcile = useMutation({
+    mutationFn: async (id: string) => {
+      setReconcilingId(id);
+      const res = await authFetch(`/api/domains/${id}/reconcile`, {
+        method: "POST",
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Failed to check domain");
+      return json;
+    },
+    onSettled: () => {
+      setReconcilingId(null);
+      qc.invalidateQueries({ queryKey: ["domains"] });
+    },
   });
 
   const loadDns = async (id: string) => {
@@ -136,30 +143,28 @@ export default function DomainsPage() {
         </Dialog>
       </div>
       <section className="space-y-3">
-        {/* <div className="flex items-center justify-between">
-					<span className="text-sm text-neutral-500">{(data?.domains ?? []).length} total</span>
-				</div> */}
-        {isLoading && (
-          <CardGridSkeleton />
-        )}
+        {isLoading && <CardGridSkeleton />}
         {!isLoading && (data?.domains ?? []).length === 0 && (
           <p className="rounded-2xl bg-white px-5 py-4 text-sm text-neutral-500">
             No domains yet
           </p>
         )}
+        {reconcile.isError && (
+          <p className="text-sm text-red-600">
+            {(reconcile.error as Error).message}
+          </p>
+        )}
         <div className="grid gap-3">
-          {(data?.domains ?? []).map((d) => {
-            const dns = data?.dns?.[d.id];
-            return (
-              <DomainItemCard
-                key={d.id}
-                dns={dns}
-                loadDns={loadDns}
-                item={d}
-                remove={remove}
-              />
-            );
-          })}
+          {(data?.domains ?? []).map((d) => (
+            <DomainItemCard
+              key={d.id}
+              item={d}
+              loadDns={loadDns}
+              remove={remove}
+              reconcile={reconcile}
+              reconcilingId={reconcilingId}
+            />
+          ))}
         </div>
       </section>
       {dnsView && (

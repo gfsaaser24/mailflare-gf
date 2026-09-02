@@ -57,10 +57,16 @@ export const domains = pgTable(
 		status: text("status", { enum: ["pending", "active", "error"] })
 			.notNull()
 			.default("pending"),
+		/** Why the domain is in `error`; null while it is `pending` or `active`. */
+		statusReason: text("status_reason"),
 		routingStatus: text("routing_status"),
 		sendingSubdomainTag: text("sending_subdomain_tag"),
 		sendingEnabled: boolean("sending_enabled").notNull().default(false),
 		routingEnabled: boolean("routing_enabled").notNull().default(false),
+		/** Every required Email Routing (and sending) DNS record was present at the last check. */
+		dnsOk: boolean("dns_ok").notNull().default(false),
+		/** When `reconcileDomain` last compared this row to live Cloudflare state. */
+		lastCheckedAt: timestamp("last_checked_at", { withTimezone: true, mode: "date" }),
 		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),

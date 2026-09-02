@@ -39,3 +39,30 @@ export function summariseDns(
 		},
 	};
 }
+
+/**
+ * True when every DNS record the domain needs is live.
+ *
+ * Routing records (MX + SPF TXT) are always required. The sending records are
+ * only required for domains that actually have a sending subdomain.
+ */
+export function dnsRecordsOk(summary: DnsStatusSummary, requireSending: boolean): boolean {
+	if (!summary.routing.configured) return false;
+	return requireSending ? summary.sending.configured : true;
+}
+
+/** Human-readable reasons for `dnsRecordsOk` being false; empty when DNS is fine. */
+export function describeMissingDns(summary: DnsStatusSummary, requireSending: boolean): string[] {
+	const reasons: string[] = [];
+	if (!summary.routing.configured) {
+		reasons.push(
+			summary.routing.missing.length > 0
+				? `Missing Email Routing DNS records: ${summary.routing.missing.join(", ")}`
+				: "Email Routing DNS records are not published",
+		);
+	}
+	if (requireSending && !summary.sending.configured) {
+		reasons.push("Email Sending DNS records are not published");
+	}
+	return reasons;
+}

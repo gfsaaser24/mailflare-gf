@@ -1,30 +1,36 @@
 import { and, asc, eq } from "drizzle-orm";
-import type { getDb } from "@/db";
 import { folders } from "@/db/schema";
-import type { SessionUser } from "@/lib/auth/types";
+import type { OrgContext } from "@/lib/api/with-org";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 
-type Db = ReturnType<typeof getDb>;
-
-export async function getMailboxFolderAccess(db: Db, user: SessionUser, mailboxId: string) {
-	const access = await getMailboxAccessLevel(db, user, mailboxId);
+/**
+ * Mailbox access for folder operations, re-checked against the request's
+ * organisation: a mailbox in another org is treated as missing.
+ */
+export async function getMailboxFolderAccess(ctx: OrgContext, mailboxId: string) {
+	const access = await getMailboxAccessLevel(ctx.db, ctx.user, mailboxId);
 	if (!access?.canRead) return null;
+	if (access.mailbox.organizationId !== ctx.orgId) return null;
 	return { mailboxId: access.mailbox.id, mailboxUserId: access.mailbox.userId, canManage: access.canManage };
 }
 
-export function listFoldersForMailbox(db: Db, mailboxId: string) {
+export function listFoldersForMailbox({ db, scoped }: OrgContext, mailboxId: string) {
 	return db
 		.select()
 		.from(folders)
-		.where(eq(folders.mailboxId, mailboxId))
+		.where(and(scoped(folders), eq(folders.mailboxId, mailboxId)))
 		.orderBy(asc(folders.name));
 }
 
-export async function getFolderForMailbox(db: Db, folderId: string, mailboxId: string) {
+export async function getFolderForMailbox(
+	{ db, scoped }: OrgContext,
+	folderId: string,
+	mailboxId: string,
+) {
 	const [folder] = await db
 		.select()
 		.from(folders)
-		.where(and(eq(folders.id, folderId), eq(folders.mailboxId, mailboxId)))
+		.where(and(scoped(folders), eq(folders.id, folderId), eq(folders.mailboxId, mailboxId)))
 		.limit(1);
 	return folder ?? null;
 }

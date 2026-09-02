@@ -45,6 +45,13 @@ export async function createSession(env: CloudflareEnv, userId: string): Promise
 	return token;
 }
 
+/**
+ * Resolves a session cookie to the user row.
+ *
+ * The full `users` row is selected, so `organizationId` always comes back: it is
+ * the tenant scope every route runs under (see `src/lib/api/with-org.ts`). The
+ * row therefore satisfies `SessionUser` (`src/lib/auth/types.d.ts`).
+ */
 export async function getUserFromSession(
 	env: CloudflareEnv,
 	token: string | undefined,

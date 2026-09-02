@@ -1,21 +1,37 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Check,
-  X,
-  AlertTriangle,
-  ArrowRight,
-  Globe2,
-  Trash2,
-} from "lucide-react";
+import { AlertTriangle, Check, Globe2, RefreshCw, Trash2 } from "lucide-react";
+import type { Domain } from "./types";
 
-export default function DomainItemCard({ item, dns, remove, loadDns }: any) {
+type MutationLike = { mutate: (id: string) => void; isPending: boolean };
+
+type Props = {
+  item: Domain;
+  remove: MutationLike;
+  reconcile: MutationLike;
+  /** Id currently being reconciled, so only that card shows the spinner. */
+  reconcilingId?: string | null;
+  loadDns: (id: string) => void;
+};
+
+function formatChecked(value: string | null): string {
+  if (!value) return "never checked";
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return "never checked";
+  return `checked ${at.toLocaleString()}`;
+}
+
+export default function DomainItemCard({
+  item,
+  remove,
+  reconcile,
+  reconcilingId,
+  loadDns,
+}: Props) {
+  const checking = reconcile.isPending && reconcilingId === item.id;
 
   return (
-    <div
-      key={item.id}
-      className="flex flex-col gap-3 rounded-3xl bg-white p-5"
-    >
+    <div className="flex flex-col gap-3 rounded-3xl bg-white p-5">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600">
           <Globe2 className="h-5 w-5" />
@@ -25,7 +41,15 @@ export default function DomainItemCard({ item, dns, remove, loadDns }: any) {
             {item.hostname}
           </span>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant={item.status === "active" ? "success" : "secondary"}>
+            <Badge
+              variant={
+                item.status === "active"
+                  ? "success"
+                  : item.status === "error"
+                    ? "destructive"
+                    : "secondary"
+              }
+            >
               {item.status}
             </Badge>
             {item.routingEnabled && <Badge variant="outline">routing</Badge>}
@@ -33,6 +57,16 @@ export default function DomainItemCard({ item, dns, remove, loadDns }: any) {
           </div>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => reconcile.mutate(item.id)}
+            disabled={reconcile.isPending}
+            aria-label={`Check ${item.hostname} now`}
+          >
+            <RefreshCw className={`h-4 w-4 ${checking ? "animate-spin" : ""}`} />
+            {checking ? "Checking..." : "Check now"}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => loadDns(item.id)}>
             DNS
           </Button>
@@ -47,44 +81,22 @@ export default function DomainItemCard({ item, dns, remove, loadDns }: any) {
           </Button>
         </div>
       </div>
-      {dns && (
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <span className="flex items-center gap-1 text-neutral-500">
-            Routing{" "}
-            {dns.routing.configured ? (
-              <Check className="h-3.5 w-3.5 text-green-600" />
-            ) : (
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            )}
-          </span>
-          {dns.routing.missing.length > 0 && (
-            <span className="text-red-600 flex items-center gap-1">
-              <X className="h-3 w-3" />
-              Missing: {dns.routing.missing.join(", ")}
-            </span>
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <span className="flex items-center gap-1 text-neutral-500">
+          DNS{" "}
+          {item.dnsOk ? (
+            <Check className="h-3.5 w-3.5 text-green-600" />
+          ) : (
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
           )}
-          <span className="text-neutral-300">|</span>
-          <span className="flex items-center gap-1 text-neutral-500">
-            Sending{" "}
-            {dns.sending.configured ? (
-              <Check className="h-3.5 w-3.5 text-green-600" />
-            ) : (
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            )}
-          </span>
-          {dns.sending.records.length > 0 && (
-            <span className="text-neutral-500">
-              {dns.sending.records.join(", ")}
-            </span>
-          )}
-          <button
-            onClick={() => loadDns(item.id)}
-            className="flex items-center gap-0.5 text-blue-600 hover:text-blue-800"
-          >
-            <ArrowRight className="h-3 w-3" />
-            details
-          </button>
-        </div>
+        </span>
+        <span className="text-neutral-300">|</span>
+        <span className="text-neutral-500">
+          {formatChecked(item.lastCheckedAt)}
+        </span>
+      </div>
+      {item.statusReason && (
+        <p className="text-xs text-red-600">{item.statusReason}</p>
       )}
     </div>
   );

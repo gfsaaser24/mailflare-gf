@@ -10,7 +10,15 @@ const API_KEY_PREFIX = "ep_";
 export type ApiAuthResult = {
 	userId: string;
 	email: string;
+	/**
+	 * Tenant scope for the request, taken from `api_keys.organization_id` (not
+	 * from the owning user): a key is issued inside one organisation and can only
+	 * ever act there. `withOrg()` uses this as `ctx.orgId`.
+	 */
+	organizationId: string;
 	scopes: string[];
+	/** The key owner's row, so callers do not have to re-query `users`. */
+	user: typeof users.$inferSelect;
 };
 
 export async function authenticateApiKey(
@@ -41,7 +49,9 @@ export async function authenticateApiKey(
 		return {
 			userId: user.id,
 			email: user.email,
+			organizationId: candidate.organizationId,
 			scopes: parseScopes(candidate.scopes),
+			user,
 		};
 	}
 	return null;

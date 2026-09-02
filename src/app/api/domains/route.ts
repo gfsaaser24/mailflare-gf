@@ -2,37 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/cloudflare";
 import { requireUser } from "@/lib/auth/cookies";
 import { addDomainSchema } from "@/lib/validators";
-import { addDomainForUser, getDomainDns, listUserDomains } from "@/lib/domains/service";
+import { addDomainForUser, listUserDomains } from "@/lib/domains/service";
 import { DomainProvisionError } from "@/lib/domains/provision";
-import { summariseDns, type DnsStatusSummary } from "@/lib/dns-status";
 
+/**
+ * The list is served straight from the rows. DNS/routing health is no longer
+ * recomputed per request: `POST /api/domains/[id]/reconcile` (and the nightly
+ * `scripts/reconcile-domains.ts`) own `status`, `status_reason`, `dns_ok` and
+ * `last_checked_at`.
+ */
 export async function GET(request: NextRequest) {
 	const env = getEnv();
 	const user = await requireUser(env, request);
 	const domainOwnerId = user.canManageMailboxes && user.createdByUserId ? user.createdByUserId : user.id;
 	const domains = await listUserDomains(env, domainOwnerId);
 
-	const includeDns = request.nextUrl.searchParams.get("includeDns") === "true";
-
-	let dns: Record<string, DnsStatusSummary> = {};
-	if (includeDns) {
-		const results = await Promise.allSettled(
-			domains.map(async (domain) => {
-				const view = await getDomainDns(env, domain);
-				return {
-					id: domain.id,
-					summary: summariseDns(view.routing.records, view.routing.missing, view.sending),
-				};
-			}),
-		);
-		for (const r of results) {
-			if (r.status === "fulfilled") {
-				dns[r.value.id] = r.value.summary;
-			}
-		}
-	}
-
-	return NextResponse.json({ domains, dns: includeDns ? dns : undefined });
+	return NextResponse.json({ domains });
 }
 
 export async function POST(request: Request) {
