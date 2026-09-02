@@ -49,6 +49,13 @@ export class EdgeWorkerEmailSender implements EmailSender {
 	}
 }
 
+/** Production with no transport configured: every send fails loudly instead of losing mail. */
+export class UnconfiguredEmailSender implements EmailSender {
+	async send(): Promise<{ messageId: string }> {
+		throw new Error("Outbound email is not configured: set EDGE_WORKER_URL and EDGE_WORKER_SECRET");
+	}
+}
+
 /** Used when no transport is configured (dev): logs and pretends to send. */
 export class NoopEmailSender implements EmailSender {
 	async send(message: OutboundMessage): Promise<{ messageId: string }> {

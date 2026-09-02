@@ -1,6 +1,11 @@
 import { getSharedDb } from "@/db";
 import { StorageBucket } from "@/lib/storage/bucket";
-import { EdgeWorkerEmailSender, NoopEmailSender, type EmailSender } from "@/lib/email/transport";
+import {
+	EdgeWorkerEmailSender,
+	NoopEmailSender,
+	UnconfiguredEmailSender,
+	type EmailSender,
+} from "@/lib/email/transport";
 import { createMemoryRateLimit } from "@/lib/auth/memory-rate-limit";
 
 let cached: AppEnv | undefined;
@@ -15,6 +20,11 @@ function buildEmailSender(): EmailSender {
 	const url = process.env.EDGE_WORKER_URL;
 	const secret = process.env.EDGE_WORKER_SECRET;
 	if (url && secret) return new EdgeWorkerEmailSender(url, secret);
+	if (url || secret) {
+		throw new Error("EDGE_WORKER_URL and EDGE_WORKER_SECRET must be set together");
+	}
+	// Silently dropping mail is only acceptable in development.
+	if (process.env.NODE_ENV === "production") return new UnconfiguredEmailSender();
 	return new NoopEmailSender();
 }
 

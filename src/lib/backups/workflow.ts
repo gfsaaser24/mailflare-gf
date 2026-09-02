@@ -40,8 +40,6 @@ export async function runBackup(env: AppEnv, backupId: string): Promise<void> {
 				error: null,
 			})
 			.where(eq(backups.id, backupId));
-
-		await deleteExpiredBackups(env);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Backup failed";
 		await db
@@ -50,6 +48,32 @@ export async function runBackup(env: AppEnv, backupId: string): Promise<void> {
 			.where(eq(backups.id, backupId));
 		throw error;
 	}
+
+	// Retention cleanup is separate: a failure here must not flip a completed backup to failed.
+	try {
+		await deleteExpiredBackups(env);
+	} catch (error) {
+		console.error("Backup retention cleanup failed", error);
+	}
+}
+
+/** Backups still "queued"/"running" after this long were interrupted by a restart or deploy. */
+const STALE_BACKUP_MS = 60 * 60 * 1000;
+
+/**
+ * Marks backups that can no longer be running as failed. Backups run inside the
+ * app process, so a restart mid-run leaves a non-terminal row behind; this is
+ * called from the backups list route to reconcile those.
+ */
+export async function reconcileStaleBackups(env: AppEnv): Promise<number> {
+	const db = getDb(env);
+	const cutoff = new Date(Date.now() - STALE_BACKUP_MS);
+	const stale = await db
+		.update(backups)
+		.set({ status: "failed", error: "Interrupted by an app restart", completedAt: new Date() })
+		.where(and(inArray(backups.status, ["queued", "running"]), lt(backups.createdAt, cutoff)))
+		.returning({ id: backups.id });
+	return stale.length;
 }
 
 /**

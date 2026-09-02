@@ -7,6 +7,7 @@ import {
 	updateBackupSettings,
 } from "@/lib/backups/service";
 import { startBackup } from "@/lib/backups/utils";
+import { reconcileStaleBackups } from "@/lib/backups/workflow";
 import { getEnv } from "@/lib/cloudflare";
 import { assertAdmin } from "@/lib/auth/admin";
 import { requireUser } from "@/lib/auth/cookies";
@@ -22,6 +23,7 @@ async function requireAdmin(request: Request) {
 export async function GET(request: Request) {
 	try {
 		const { env } = await requireAdmin(request);
+		await reconcileStaleBackups(env);
 		const [settings, backupList] = await Promise.all([
 			getBackupSettings(env),
 			listBackups(env),

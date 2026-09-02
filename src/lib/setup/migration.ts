@@ -1,9 +1,12 @@
 import path from "node:path";
-import { sql } from "drizzle-orm";
+import { getTableName, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import type { AppDatabase } from "@/db";
+import { schema, type AppDatabase } from "@/db";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "drizzle", "migrations");
+
+/** Every table the app owns; derived from the Drizzle schema so the check cannot drift. */
+const REQUIRED_TABLES = Object.values(schema).map((table) => getTableName(table));
 
 /**
  * Prepares a fresh Postgres database for first use during setup.
@@ -20,9 +23,10 @@ export async function migrateCleanDatabase(db: AppDatabase): Promise<boolean> {
 	);
 	const tableNames = new Set(Array.from(existing, (row) => row.table_name));
 	if (tableNames.size > 0) {
-		if (tableNames.has("users") && tableNames.has("domains")) return false;
+		const missing = REQUIRED_TABLES.filter((table) => !tableNames.has(table));
+		if (missing.length === 0) return false;
 		throw new Error(
-			"The database is not empty, but the Mailflare schema is incomplete. Apply the committed migrations before continuing setup.",
+			`The database is not empty, but the Mailflare schema is incomplete (missing: ${missing.join(", ")}). Apply the committed migrations before continuing setup.`,
 		);
 	}
 

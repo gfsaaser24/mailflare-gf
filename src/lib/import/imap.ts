@@ -24,10 +24,21 @@ function toImapSocket(socket: NetSocket): ImapSocket {
 		writable: Writable.toWeb(socket) as WritableStream<Uint8Array>,
 		close: () =>
 			new Promise<void>((resolve) => {
+				// A peer-closed socket already emitted its single "close"; don't wait for another.
+				if (socket.destroyed) return resolve();
 				socket.once("close", () => resolve());
 				socket.destroy();
 			}),
 	};
+}
+
+/** Idle limit for the IMAP socket: a server that accepts the connection but never talks gets dropped. */
+const IMAP_SOCKET_TIMEOUT_MS = 60_000;
+
+function applySocketTimeout(socket: NetSocket): void {
+	socket.setTimeout(IMAP_SOCKET_TIMEOUT_MS, () => {
+		socket.destroy(new Error("IMAP connection timed out"));
+	});
 }
 
 async function connectImapSocket(input: {
@@ -46,6 +57,7 @@ async function connectImapSocket(input: {
 					resolve(toImapSocket(socket));
 				},
 			);
+			applySocketTimeout(socket);
 			socket.once("error", onError);
 			return;
 		}
@@ -54,6 +66,7 @@ async function connectImapSocket(input: {
 			socket.off("error", onError);
 			resolve(toImapSocket(socket));
 		});
+		applySocketTimeout(socket);
 		socket.once("error", onError);
 	});
 }
