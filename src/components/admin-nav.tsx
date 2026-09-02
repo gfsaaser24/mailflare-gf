@@ -9,8 +9,10 @@ import {
   Settings,
   Palette,
   Users,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuthMe } from "./platform/use-auth-me";
 import { NavItem } from "./components-nav";
 import { SidebarFooter } from "./sidebar-footer";
 import { SidebarHeader } from "./sidebar-header";
@@ -47,14 +49,22 @@ const sections = [
   },
 ];
 
+/** Only platform operators see it; the server decides, never the client. */
+const platformSection = {
+  label: "Platform",
+  links: [{ href: "/platform", label: "Organisations", icon: Building2 }],
+};
+
 export function AdminNav({ className }: { className?: string }) {
   const { minimal } = useSidebar();
+  const { data: me } = useAuthMe();
+  const visibleSections = me?.user?.isPlatformOperator ? [...sections, platformSection] : sections;
 
   return (
     <nav className={cn("flex min-h-full flex-col gap-1", className)}>
       <SidebarHeader href="/inbox" label="Admin" />
       <div className={cn("space-y-4", minimal && "space-y-2")}>
-        {sections.map((section) => {
+        {visibleSections.map((section) => {
           const links = section.links;
           if (links.length === 0) return null;
 

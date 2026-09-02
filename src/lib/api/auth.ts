@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { apiKeys, users } from "@/db/schema";
 import { verifyApiKey, parseScopes } from "@/lib/api-keys";
 import { isSessionToken } from "@/lib/auth/session";
+import { getClientIp } from "@/lib/http/ip";
 
 /** Mirrors `KEY_PREFIX` in `src/lib/api-keys.ts`; every issued API key starts with it. */
 const API_KEY_PREFIX = "ep_";
@@ -21,10 +22,33 @@ export type ApiAuthResult = {
 	user: typeof users.$inferSelect;
 };
 
+/**
+ * A key that matched a row but must not be used. Callers answer 401 with
+ * `message`, so the operator can tell "revoked" apart from "never existed".
+ */
+export type ApiAuthFailure = {
+	reason: "revoked" | "expired";
+	message: "API key revoked" | "API key expired";
+};
+
+export type ApiAuthOutcome = ApiAuthResult | ApiAuthFailure | null;
+
+export function isApiAuthFailure(outcome: ApiAuthOutcome): outcome is ApiAuthFailure {
+	return outcome !== null && "reason" in outcome;
+}
+
+/**
+ * Resolves `Authorization: Bearer ep_...` to its owner.
+ *
+ * Returns `null` for anything unrecognised, an `ApiAuthFailure` for a key that
+ * exists but is revoked or expired, and an `ApiAuthResult` otherwise. `request`
+ * is optional and only used to record `last_used_ip`.
+ */
 export async function authenticateApiKey(
 	env: CloudflareEnv,
 	authorization: string | null,
-): Promise<ApiAuthResult | null> {
+	request?: Request,
+): Promise<ApiAuthOutcome> {
 	if (!authorization?.startsWith("Bearer ")) return null;
 	const key = authorization.slice(7).trim();
 	if (!key) return null;
@@ -36,15 +60,25 @@ export async function authenticateApiKey(
 	const db = getDb(env);
 	const candidates = await db.select().from(apiKeys).where(eq(apiKeys.prefix, prefix));
 
+	const now = new Date();
 	for (const candidate of candidates) {
-		if (!verifyApiKey(key, candidate.keyHash)) continue;
+		if (!verifyApiKey(key, candidate.keyHash, candidate.hashAlgo)) continue;
+		// The key is genuine from here on, so a bad state is reported rather than
+		// silently falling through to "unknown credentials".
+		if (candidate.revokedAt) return { reason: "revoked", message: "API key revoked" };
+		if (candidate.expiresAt && candidate.expiresAt.getTime() < now.getTime()) {
+			return { reason: "expired", message: "API key expired" };
+		}
+
 		const [user] = await db.select().from(users).where(eq(users.id, candidate.userId)).limit(1);
 		if (!user || user.disabled) continue;
 
-		await db
+		// Fire-and-forget: usage bookkeeping must never fail or slow the request.
+		void db
 			.update(apiKeys)
-			.set({ lastUsedAt: new Date() })
-			.where(eq(apiKeys.id, candidate.id));
+			.set({ lastUsedAt: now, lastUsedIp: request ? getClientIp(request) : null })
+			.where(eq(apiKeys.id, candidate.id))
+			.catch(() => {});
 
 		return {
 			userId: user.id,

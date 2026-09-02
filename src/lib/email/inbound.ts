@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { messages } from "@/db/schema";
+import { inboundFailures, messages } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { buildSnippet, parseRawMime } from "@/lib/email/parse";
 import { resolveInboundAddress, resolveInboxRuleDestination } from "@/lib/email/routing";
@@ -17,6 +17,9 @@ import { sendMailboxAutoReply } from "@/lib/email/auto-reply";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import { listMessageAttachments, storeMessageAttachments } from "@/lib/email/attachments";
 import { getUnsubscribeUrlFromRawR2Key } from "@/lib/email/unsubscribe";
+import { getUserOrganizationId } from "@/lib/organizations/service";
+import { isQuotaExceededError } from "@/lib/quotas/errors";
+import { releaseQuota, reserveQuota } from "@/lib/quotas/service";
 import type { SessionUser } from "@/lib/auth/types";
 import {
 	getMailboxNotificationUserIds,
@@ -95,6 +98,41 @@ export async function processInboundMessage(
 		}
 	}
 
+	// Quota (T5.1): the raw object plus its attachments must fit in the organisation's
+	// storage allowance. On a breach nothing is inserted, the raw object is kept and an
+	// `inbound_failures` row records it, so it can be retried once the quota is raised.
+	const incomingBytes =
+		buffer.byteLength +
+		parsed.attachments.reduce((total, attachment) => total + attachment.content.byteLength, 0);
+	const organizationId = await getUserOrganizationId(db, decision.mailbox.userId);
+	try {
+		await reserveQuota(db, organizationId, { storageBytes: incomingBytes });
+	} catch (error) {
+		if (!isQuotaExceededError(error)) throw error;
+		console.warn(`Storage quota exceeded for ${payload.to}; keeping ${payload.rawR2Key}`);
+		await db
+			.insert(inboundFailures)
+			.values({
+				id: newId("inf"),
+				organizationId,
+				rawR2Key: payload.rawR2Key,
+				mailboxId: decision.mailbox.mailboxId,
+				fromAddr,
+				toAddr,
+				error: "quota exceeded",
+				attempts: 1,
+			})
+			.onConflictDoUpdate({
+				target: inboundFailures.rawR2Key,
+				set: {
+					attempts: sql`${inboundFailures.attempts} + 1`,
+					error: "quota exceeded",
+					resolvedAt: null,
+				},
+			});
+		return;
+	}
+
 	const contact = await upsertContactFromAddress(env, {
 		userId: decision.mailbox.userId,
 		address: fromAddr,
@@ -137,10 +175,12 @@ export async function processInboundMessage(
 	} catch (error) {
 		// Lost the race against a concurrent delivery of the same message: it is stored.
 		if (isUniqueViolation(error)) {
+			await releaseQuota(db, organizationId, { storageBytes: incomingBytes });
 			await deleteConversationIfEmpty(db, conversation.id);
 			await discardDuplicateRaw(env, payload.rawR2Key);
 			return;
 		}
+		await releaseQuota(db, organizationId, { storageBytes: incomingBytes });
 		throw error;
 	}
 
@@ -150,6 +190,7 @@ export async function processInboundMessage(
 		await storeMessageAttachments(env, messageId, parsed.attachments, { validate: false });
 	} catch (error) {
 		await db.delete(messages).where(eq(messages.id, messageId));
+		await releaseQuota(db, organizationId, { storageBytes: incomingBytes });
 		throw error;
 	}
 

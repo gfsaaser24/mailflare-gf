@@ -273,7 +273,7 @@ describe.skipIf(!hasTestDatabase())("org scope: api-keys/webhooks/calendar/templ
 
 		await signIn(USER_A);
 		const response = await POST(
-			json("/api/api-keys", "POST", { name: "New", scopes: ["read"] }),
+			json("/api/api-keys", "POST", { name: "New", scopes: ["messages:read"] }),
 			routeCtx(),
 		);
 		expect(response.status).toBe(200);

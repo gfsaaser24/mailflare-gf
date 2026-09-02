@@ -3,6 +3,8 @@ import { getDb } from "@/db";
 import { messageAttachments, messages } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
+import { addStorageBytes, assertAttachmentBytes } from "@/lib/quotas/service";
+import type { QuotaLimits } from "@/lib/quotas/templates";
 import type { SessionUser } from "@/lib/auth/types";
 import type {
 	AttachmentContent,
@@ -40,7 +42,15 @@ function sanitizeFilename(filename: string): string {
 	return normalized || "attachment";
 }
 
-export function validateAttachments(attachments: AttachmentContent[]): void {
+/**
+ * Static limits first, then the organisation's `max_attachment_bytes` when the
+ * caller knows it (T5.1). A breach of the quota throws `QuotaExceededError`,
+ * which routes answer with 429.
+ */
+export function validateAttachments(
+	attachments: AttachmentContent[],
+	quota?: Pick<QuotaLimits, "maxAttachmentBytes"> | null,
+): void {
 	if (attachments.length > MAX_ATTACHMENT_COUNT) {
 		throw new Error(`A message can include at most ${MAX_ATTACHMENT_COUNT} attachments`);
 	}
@@ -51,6 +61,7 @@ export function validateAttachments(attachments: AttachmentContent[]): void {
 		if (size > MAX_ATTACHMENT_SIZE) {
 			throw new Error(`${attachment.filename} exceeds the 10 MB attachment limit`);
 		}
+		assertAttachmentBytes(quota, size);
 		totalSize += size;
 	}
 
@@ -59,13 +70,20 @@ export function validateAttachments(attachments: AttachmentContent[]): void {
 	}
 }
 
+/**
+ * Stores the parts and their rows.
+ *
+ * `options.organizationId` books the stored bytes on `org_usage.storage_bytes`;
+ * the inbound path leaves it out because it reserves raw + attachment bytes in
+ * one go before the message is inserted.
+ */
 export async function storeMessageAttachments(
 	env: CloudflareEnv,
 	messageId: string,
 	attachments: AttachmentContent[],
-	options?: { validate?: boolean },
+	options?: { validate?: boolean; quota?: Pick<QuotaLimits, "maxAttachmentBytes"> | null; organizationId?: string },
 ): Promise<StoredAttachment[]> {
-	if (options?.validate !== false) validateAttachments(attachments);
+	if (options?.validate !== false) validateAttachments(attachments, options?.quota);
 	const db = getDb(env);
 	const stored: StoredAttachment[] = [];
 
@@ -104,6 +122,11 @@ export async function storeMessageAttachments(
 	} catch (error) {
 		await Promise.all(stored.map((attachment) => env.BUCKET.delete(attachment.r2Key)));
 		throw error;
+	}
+
+	if (options?.organizationId) {
+		const bytes = stored.reduce((total, attachment) => total + attachment.size, 0);
+		await addStorageBytes(db, options.organizationId, bytes);
 	}
 
 	return stored;
@@ -208,6 +231,26 @@ export async function listAttachmentKeysForMessages(
 	}
 
 	return keys;
+}
+
+/** Total stored bytes of every attachment of the given messages. */
+export async function sumAttachmentBytesForMessages(
+	env: CloudflareEnv,
+	messageIds: string[],
+): Promise<number> {
+	if (messageIds.length === 0) return 0;
+	const db = getDb(env);
+	let total = 0;
+
+	for (const ids of chunk(messageIds, ATTACHMENT_LOOKUP_CHUNK)) {
+		const rows = await db
+			.select({ size: messageAttachments.size })
+			.from(messageAttachments)
+			.where(inArray(messageAttachments.messageId, ids));
+		for (const row of rows) total += row.size ?? 0;
+	}
+
+	return total;
 }
 
 /**

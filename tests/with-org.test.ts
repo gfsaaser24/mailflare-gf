@@ -12,6 +12,7 @@ import { apiKeys, domains, folders, mailboxes, organizations, users } from "@/db
 import { withOrg } from "@/lib/api/with-org";
 import { generateApiKey, scopesToJson } from "@/lib/api-keys";
 import { SESSION_COOKIE, createSession } from "@/lib/auth/session";
+import { ensureApiKeyColumns } from "./helpers/api-key-columns";
 import { createDb, hasTestDatabase } from "./helpers/db";
 
 /** Cookie jar backing the mocked `next/headers`. */
@@ -114,6 +115,7 @@ async function seed(): Promise<void> {
 		name: "Org A key",
 		prefix: key.prefix,
 		keyHash: key.hash,
+		hashAlgo: key.hashAlgo,
 		scopes: scopesToJson(["folders:read"]),
 	});
 }
@@ -156,7 +158,8 @@ const requiresOtherScope = withOrg(async () => NextResponse.json({ ok: true }), 
 });
 
 describe.skipIf(!hasTestDatabase())("withOrg (T3.2)", () => {
-	beforeAll(() => {
+	beforeAll(async () => {
+		await ensureApiKeyColumns();
 		// The route handlers build their env from process.env.
 		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 		// `getEnv()` refuses a half-configured mail transport; these tests send no mail.

@@ -9,6 +9,7 @@ import { MailSearchInput } from "@/components/mail-search/mail-search-input";
 import { MailSearchProvider } from "@/components/mail-search/mail-search-context";
 import { MailboxProvider } from "@/components/mailbox-provider";
 import { MailboxSelector } from "@/components/mailbox-selector";
+import { ImpersonationBanner } from "@/components/platform/impersonation-banner";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { SidebarProvider } from "@/components/sidebar-state";
 
@@ -28,6 +29,10 @@ export default function DashboardLayout({
                 <DashboardNav />
               </aside>
               <div className="flex min-h-0 min-w-0 flex-col">
+                {/* Renders nothing unless a platform operator minted this session (T3.3). */}
+                <div className="empty:hidden shrink-0 pr-4 pt-2">
+                  <ImpersonationBanner />
+                </div>
                 <header className="flex h-16 w-full shrink-0 items-center gap-4 pr-4 text-sm">
                   <MailSearchInput />
                   <Link

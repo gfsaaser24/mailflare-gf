@@ -5,6 +5,8 @@ import { withOrg } from "@/lib/api/with-org";
 import { newId } from "@/lib/ids";
 import { mailboxSchema } from "@/lib/validators";
 import { ensureMailboxDomainRouting, getMailboxDomainAddresses } from "@/lib/mailboxes/domain-addresses";
+import { isQuotaExceededError, quotaErrorBody } from "@/lib/quotas/errors";
+import { releaseQuota, reserveQuota } from "@/lib/quotas/service";
 import { ensurePersonalMailbox } from "./utils";
 
 export const GET = withOrg(async (ctx) => {
@@ -66,6 +68,21 @@ export const POST = withOrg(async (ctx, request) => {
 		return NextResponse.json({ error: "Mailbox already exists" }, { status: 409 });
 	}
 
+	// Quota (T5.1): booked under the org usage lock before the row exists, so two
+	// concurrent creates can never both pass the last slot.
+	const quotaIncrement = {
+		mailboxes: 1,
+		...(mailboxType === "shared" ? { sharedMailboxes: 1 } : {}),
+	};
+	try {
+		await reserveQuota(db, orgId, quotaIncrement);
+	} catch (error) {
+		if (isQuotaExceededError(error)) {
+			return NextResponse.json(quotaErrorBody(error), { status: error.status });
+		}
+		throw error;
+	}
+
 	const id = newId("mbx");
 	await db.insert(mailboxes).values(
 		insertValues(mailboxes, {
@@ -86,6 +103,7 @@ export const POST = withOrg(async (ctx, request) => {
 		);
 	} catch (err) {
 		await db.delete(mailboxes).where(and(scoped(mailboxes), eq(mailboxes.id, id)));
+		await releaseQuota(db, orgId, quotaIncrement);
 		const message = err instanceof Error ? err.message : "Failed to create Cloudflare routing rule";
 		return NextResponse.json({ error: message }, { status: 502 });
 	}

@@ -33,6 +33,9 @@
  *
  *   export const GET = withOrg(handler, { allowApiKey: true, requiredScope: "messages:read" });
  *
+ * `requiredScope` must name an entry of the catalogue in `src/lib/api/scopes.ts`
+ * — that is the only set of scopes a key can be issued with.
+ *
  * ---------------------------------------------------------------------------
  * WHAT IT DOES
  * ---------------------------------------------------------------------------
@@ -78,7 +81,7 @@ import {
 	users,
 	webhooks,
 } from "@/db/schema";
-import { authenticateApiKey, requireScope } from "@/lib/api/auth";
+import { authenticateApiKey, isApiAuthFailure, requireScope } from "@/lib/api/auth";
 import { SESSION_COOKIE, getUserFromSession } from "@/lib/auth/session";
 import type { SessionUser } from "@/lib/auth/types";
 import { getEnv } from "@/lib/cloudflare";
@@ -199,7 +202,10 @@ export function withOrg<T extends RouteContext = RouteContext>(
 			if (sessionUser.disabled) return json("Unauthorized", 401);
 			principal = { ...sessionUser, kind: "session", scopes: ["*"] };
 		} else if (options.allowApiKey) {
-			const auth = await authenticateApiKey(env, request.headers.get("authorization"));
+			const auth = await authenticateApiKey(env, request.headers.get("authorization"), request);
+			// A revoked or expired key is a real key in a bad state: say so, rather
+			// than the generic "Unauthorized" used for credentials we don't know.
+			if (isApiAuthFailure(auth)) return json(auth.message, 401);
 			if (auth) {
 				if (options.requiredScope && !requireScope(auth.scopes, options.requiredScope)) {
 					return json("Insufficient scope", 403);

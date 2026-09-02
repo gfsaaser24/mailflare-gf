@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, integer, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { DEFAULT_ORGANIZATION_ID } from "../../lib/organizations/constants";
 
@@ -220,11 +220,21 @@ export const apiKeys = pgTable("api_keys", {
 	name: text("name").notNull(),
 	prefix: text("prefix").notNull(),
 	keyHash: text("key_hash").notNull(),
+	/**
+	 * How `key_hash` was produced. New keys are `sha256` (hex of the full key);
+	 * `bcrypt` rows predate T6.1 and keep verifying so nobody is locked out.
+	 */
+	hashAlgo: text("hash_algo").notNull().default("bcrypt"),
 	scopes: text("scopes").notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
+	/** Null means the key never expires. */
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+	/** Set by `DELETE /api/api-keys/[id]`; a revoked key can never authenticate again. */
+	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
 	lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
+	lastUsedIp: text("last_used_ip"),
 }, (t) => [index("api_keys_organization_idx").on(t.organizationId)]);
 
 export const conversations = pgTable(
@@ -604,6 +614,48 @@ export const inboundFailures = pgTable(
 	],
 );
 
+/**
+ * Per-organisation quota limits (T5.1).
+ *
+ * A `null` column means "no limit" for that dimension, and a missing row means the
+ * organisation is unlimited entirely. Templates live in `src/lib/quotas/templates.ts`.
+ */
+export const orgQuotas = pgTable("org_quotas", {
+	organizationId: text("organization_id")
+		.primaryKey()
+		.references(() => organizations.id, { onDelete: "cascade" }),
+	maxMailboxes: integer("max_mailboxes"),
+	maxSharedMailboxes: integer("max_shared_mailboxes"),
+	maxAccounts: integer("max_accounts"),
+	maxDomains: integer("max_domains"),
+	/** Bytes; int8 because 10 GiB does not fit in int4. */
+	maxStorageBytes: bigint("max_storage_bytes", { mode: "number" }),
+	maxDailySends: integer("max_daily_sends"),
+	maxAttachmentBytes: bigint("max_attachment_bytes", { mode: "number" }),
+});
+
+/**
+ * Per-organisation usage counters (T5.1). The row every quota check takes
+ * `SELECT ... FOR UPDATE` on.
+ *
+ * `day_key` is the UTC `yyyy-mm-dd` the `sends_today` counter belongs to; when it
+ * is not today, `sends_today` is treated as 0 and rewritten on the next check.
+ */
+export const orgUsage = pgTable("org_usage", {
+	organizationId: text("organization_id")
+		.primaryKey()
+		.references(() => organizations.id, { onDelete: "cascade" }),
+	mailboxes: integer("mailboxes").notNull().default(0),
+	accounts: integer("accounts").notNull().default(0),
+	domains: integer("domains").notNull().default(0),
+	storageBytes: bigint("storage_bytes", { mode: "number" }).notNull().default(0),
+	sendsToday: integer("sends_today").notNull().default(0),
+	dayKey: text("day_key").notNull().default("1970-01-01"),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+		.notNull()
+		.$defaultFn(() => new Date()),
+});
+
 export const schema = {
 	organizations,
 	users,
@@ -630,4 +682,6 @@ export const schema = {
 	backups,
 	appSettings,
 	inboundFailures,
+	orgQuotas,
+	orgUsage,
 };

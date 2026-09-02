@@ -9,6 +9,8 @@ import { resolveConversationForOutbound, touchConversation } from "@/lib/convers
 import { getAuthorizedSenderAddress } from "@/lib/email/sender";
 import { createAuditLog } from "@/lib/mailboxes/audit";
 import { storeMessageAttachments, validateAttachments } from "@/lib/email/attachments";
+import { getUserOrganizationId } from "@/lib/organizations/service";
+import { getOrganizationQuota, reserveQuota } from "@/lib/quotas/service";
 import type { AttachmentContent } from "@/lib/email/attachment-types";
 
 export type SendEmailInput = {
@@ -29,7 +31,11 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 	const db = getDb(env);
 	const sender = await getAuthorizedSenderAddress(env, input);
 	const attachments = input.attachments ?? [];
-	validateAttachments(attachments);
+	// Quotas (T5.1): the per-attachment ceiling is known before anything is written;
+	// the daily send counter is booked right before the transport call below.
+	const organizationId = await getUserOrganizationId(db, input.userId);
+	const quota = await getOrganizationQuota(db, organizationId);
+	validateAttachments(attachments, quota);
 	await upsertContactFromAddress(env, {
 		userId: input.userId,
 		address: input.to,
@@ -70,7 +76,7 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		referencesHeader: thread.references.length ? thread.references : null,
 	});
 	try {
-		await storeMessageAttachments(env, messageId, attachments);
+		await storeMessageAttachments(env, messageId, attachments, { quota, organizationId });
 	} catch (error) {
 		await db.delete(messages).where(eq(messages.id, messageId));
 		throw error;
@@ -93,6 +99,9 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 	});
 
 	try {
+		// Books one daily send under the org usage lock; `day_key` rolls the counter.
+		// A breach throws here, so the catch below fails the message and job.
+		await reserveQuota(db, organizationId, { sendsToday: 1 });
 		const response = await env.EMAIL.send({
 			from: sender.fromAddr,
 			to: input.to,

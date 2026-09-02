@@ -7,6 +7,7 @@ import { ComposeProvider } from "@/components/compose/compose-context";
 import { FloatingComposer } from "@/components/compose/floating-composer";
 import { MailboxProvider } from "@/components/mailbox-provider";
 import { MailboxSelector } from "@/components/mailbox-selector";
+import { ImpersonationBanner } from "@/components/platform/impersonation-banner";
 import { AdminNav } from "@/components/admin-nav";
 import { SidebarProvider } from "@/components/sidebar-state";
 
@@ -29,6 +30,10 @@ export default function DashboardLayout({
                 <MailboxSelector />
               </span>
               <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain rounded-tl-3xl px-6 py-10 scrollbar-gutter-stable lg:px-12">
+                {/* Renders nothing unless a platform operator minted this session (T3.3). */}
+                <div className="w-full max-w-3xl empty:hidden">
+                  <ImpersonationBanner />
+                </div>
                 <div className="w-full max-w-3xl">{children}</div>
               </main>
             </div>

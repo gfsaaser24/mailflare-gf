@@ -2,6 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { users } from "@/db/schema";
 import { withOrg } from "@/lib/api/with-org";
+// The single sanctioned read of `platform_operators` outside `/api/platform/**`:
+// the console nav has to know whether to show the "Platform" link, and this is
+// the only session endpoint the client already calls on every page.
+import { isPlatformOperator } from "@/lib/platform/guard";
 import { hasPrimaryDomain, userHasMailboxes } from "@/lib/user";
 
 export const GET = withOrg(async ({ db, env, user, scoped }) => {
@@ -25,6 +29,17 @@ export const GET = withOrg(async ({ db, env, user, scoped }) => {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
+	// An impersonation session never counts as an operator: the guard refuses it,
+	// so the console link would only lead to a 403.
+	let platformOperator = false;
+	if (!user.impersonatedByUserId) {
+		try {
+			platformOperator = await isPlatformOperator(db, user.id);
+		} catch {
+			// Session validity must not depend on the platform table being present.
+		}
+	}
+
 	let hasMailboxes = false;
 	let isSetup = true;
 	try {
@@ -46,6 +61,9 @@ export const GET = withOrg(async ({ db, env, user, scoped }) => {
 			role: row.role,
 			canManageMailboxes: row.canManageMailboxes,
 			hasAvatar: !!row.avatarKey,
+			/** Set when a platform operator minted this session (T3.3). */
+			impersonatedByUserId: user.impersonatedByUserId ?? null,
+			isPlatformOperator: platformOperator,
 		},
 		hasMailboxes,
 		isSetup,

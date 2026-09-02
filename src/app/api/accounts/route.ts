@@ -7,6 +7,8 @@ import { newId } from "@/lib/ids";
 import { createUserAccountSchema } from "@/lib/validators";
 import { ensureEmailRoutingRuleToWorker } from "@/lib/cloudflare-api";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
+import { isQuotaExceededError, quotaErrorBody } from "@/lib/quotas/errors";
+import { releaseQuota, reserveQuota } from "@/lib/quotas/service";
 import type { CreateUserAccountInput } from "./types";
 import {
 	accountListItemFromUser,
@@ -47,6 +49,18 @@ export const POST = withOrg(async (ctx, request) => {
 	if (existing) return NextResponse.json({ error: "Email already registered" }, { status: 409 });
 	const mailbox = await getExistingMailbox(ctx, domain.id, username);
 	if (mailbox) return NextResponse.json({ error: "Email address is already assigned" }, { status: 409 });
+
+	// Quota (T5.1): an account is one user plus its personal mailbox, booked under
+	// the org usage lock before anything is written.
+	const quotaIncrement = { accounts: 1, mailboxes: 1 };
+	try {
+		await reserveQuota(db, ctx.orgId, quotaIncrement);
+	} catch (error) {
+		if (isQuotaExceededError(error)) {
+			return NextResponse.json(quotaErrorBody(error), { status: error.status });
+		}
+		throw error;
+	}
 
 	const userId = newId("usr");
 	try {
@@ -92,6 +106,7 @@ export const POST = withOrg(async (ctx, request) => {
 		return NextResponse.json({ account: accountListItemFromUser(account) }, { status: 201 });
 	} catch (error) {
 		await db.delete(users).where(and(ctx.scoped(users), eq(users.id, userId)));
+		await releaseQuota(db, ctx.orgId, quotaIncrement);
 		const message = error instanceof Error ? error.message : "Failed to create account mailbox";
 		return NextResponse.json({ error: message }, { status: 502 });
 	}

@@ -56,7 +56,7 @@ async function githubRequest<T>(
   if (response.statusText === "Forbidden") {
     return {
       response,
-      data: { error: response.statusText } as any,
+      data: { error: response.statusText } as unknown as T,
     };
   }
 
@@ -141,7 +141,7 @@ async function getTargetVersion(): Promise<string> {
 export async function getUpdateStatus(
   env: CloudflareEnv,
 ): Promise<UpdateStatus> {
-  const config = getDispatchConfig(env);
+  getDispatchConfig(env); // validates configuration; result unused here
   const currentVersion = packageMetadata.version;
   const targetVersion = await getTargetVersion();
 

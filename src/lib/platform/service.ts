@@ -21,14 +21,27 @@ import {
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
 import { newId } from "@/lib/ids";
+import {
+	applyQuotaTemplate,
+	ensureUsageRow,
+	getOrganizationQuota,
+	setOrganizationQuota as writeOrganizationQuota,
+} from "@/lib/quotas/service";
+import {
+	QUOTA_TEMPLATE_NAMES,
+	quotaTemplateLimits,
+	type QuotaLimits,
+	type QuotaTemplate as QuotaTemplateName,
+} from "@/lib/quotas/templates";
 
 /**
- * Quota templates named by T5.1. `org_quotas` does not exist yet, so a template
- * chosen here is recorded on the `platform.org_created` audit row and applied
- * once quotas ship.
+ * Quota templates (T5.1). The names live with the limits in
+ * `src/lib/quotas/templates.ts`; a template chosen here is written into
+ * `org_quotas` by `createOrganizationWithAdmin` and recorded on the
+ * `platform.org_created` audit row.
  */
-export const QUOTA_TEMPLATES = ["small", "standard", "unlimited"] as const;
-export type QuotaTemplate = (typeof QUOTA_TEMPLATES)[number];
+export const QUOTA_TEMPLATES = QUOTA_TEMPLATE_NAMES;
+export type QuotaTemplate = QuotaTemplateName;
 
 /** How long an impersonation session lives. */
 export const IMPERSONATION_TTL_MS = 60 * 60 * 1000;
@@ -230,6 +243,14 @@ export async function createOrganizationWithAdmin(
 		canManageMailboxes: true,
 	});
 
+	// Quotas (T5.1): the chosen template becomes the org's limits, and the usage
+	// row starts at zero so the first check has something to lock.
+	if (input.quotaTemplate) {
+		await applyQuotaTemplate(db, organizationId, input.quotaTemplate);
+	} else {
+		await ensureUsageRow(db, organizationId);
+	}
+
 	await db.insert(auditLogs).values({
 		id: newId("aud"),
 		organizationId,
@@ -291,6 +312,59 @@ export async function updateOrganization(
 	}
 
 	return getOrganizationSummary(db, organizationId);
+}
+
+export type OrganizationQuotaPatch = Partial<QuotaLimits> & { template?: QuotaTemplate };
+
+/** The organisation's limits, or `null` when the organisation does not exist. */
+export async function getOrganizationQuotaLimits(
+	db: AppDatabase,
+	organizationId: string,
+): Promise<QuotaLimits | null> {
+	const [existing] = await db
+		.select({ id: organizations.id })
+		.from(organizations)
+		.where(eq(organizations.id, organizationId))
+		.limit(1);
+	if (!existing) return null;
+	return getOrganizationQuota(db, organizationId);
+}
+
+/**
+ * Sets an organisation's quota: a template, explicit limits, or a template with
+ * explicit limits on top. Returns `null` when the organisation does not exist.
+ */
+export async function setOrganizationQuota(
+	db: AppDatabase,
+	organizationId: string,
+	patch: OrganizationQuotaPatch,
+	operatorUserId?: string,
+): Promise<QuotaLimits | null> {
+	const [existing] = await db
+		.select({ id: organizations.id })
+		.from(organizations)
+		.where(eq(organizations.id, organizationId))
+		.limit(1);
+	if (!existing) return null;
+
+	const { template, ...explicit } = patch;
+	const limits = await writeOrganizationQuota(db, organizationId, {
+		...(template ? quotaTemplateLimits(template) : {}),
+		...explicit,
+	});
+	await ensureUsageRow(db, organizationId);
+
+	if (operatorUserId) {
+		await db.insert(auditLogs).values({
+			id: newId("aud"),
+			organizationId,
+			actorUserId: operatorUserId,
+			action: "platform.org_quota_updated",
+			metadata: JSON.stringify({ organizationId, template: template ?? null, limits }),
+		});
+	}
+
+	return limits;
 }
 
 export type ImpersonationResult = {

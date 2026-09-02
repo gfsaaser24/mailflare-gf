@@ -4,5 +4,7 @@ export type ApiKey = {
 	prefix: string;
 	scopes: string;
 	createdAt?: string;
+	expiresAt?: string | null;
+	revokedAt?: string | null;
 	lastUsedAt?: string | null;
 };

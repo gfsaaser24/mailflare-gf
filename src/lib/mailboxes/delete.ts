@@ -2,7 +2,9 @@ import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db";
 import { domains, mailboxes, messages } from "@/db/schema";
 import { deleteEmailRoutingRule, listEmailRoutingRules } from "@/lib/cloudflare-api";
-import { deleteAttachmentsForMessages } from "@/lib/email/attachments";
+import { deleteAttachmentsForMessages, sumAttachmentBytesForMessages } from "@/lib/email/attachments";
+import { getUserOrganizationId } from "@/lib/organizations/service";
+import { releaseQuota, releaseStorageBytes } from "@/lib/quotas/service";
 import { createAuditLog } from "./audit";
 
 /** Thrown when any Cloudflare call fails; the caller must leave the database untouched. */
@@ -148,6 +150,20 @@ async function deleteMailboxRoutingRules(
 	return deleted;
 }
 
+/** Total stored size of the given objects; a missing or unreadable object counts as 0. */
+async function sumObjectBytes(env: CloudflareEnv, keys: string[]): Promise<number> {
+	let total = 0;
+	for (const key of keys) {
+		try {
+			const head = await env.BUCKET.head(key);
+			total += head?.size ?? 0;
+		} catch (error) {
+			console.error("deleteMailbox: storage head failed", key, error);
+		}
+	}
+	return total;
+}
+
 /** Best-effort object removal; storage problems are logged, never fatal. */
 async function deleteObjects(env: CloudflareEnv, keys: string[]): Promise<number> {
 	let deleted = 0;
@@ -185,10 +201,14 @@ export async function deleteMailbox(
 		.where(and(eq(messages.mailboxId, mailbox.id), ...inOrgMessages));
 	const messageIds = mailboxMessages.map((message) => message.id);
 
+	// Quota (T5.1): the bytes are measured before anything is removed, so the
+	// decrement below matches what inbound booked.
+	const attachmentBytes = await sumAttachmentBytesForMessages(env, messageIds);
 	const attachmentResult = await deleteAttachmentsForMessages(env, messageIds);
 	const rawKeys = mailboxMessages
 		.map((message) => message.rawR2Key)
 		.filter((key): key is string => !!key);
+	const rawBytes = await sumObjectBytes(env, rawKeys);
 	const avatarKeys = mailbox.avatarKey ? [mailbox.avatarKey] : [];
 	const objects =
 		attachmentResult.deleted + (await deleteObjects(env, [...rawKeys, ...avatarKeys]));
@@ -199,6 +219,10 @@ export async function deleteMailbox(
 		await tx.delete(messages).where(and(eq(messages.mailboxId, mailbox.id), ...inOrgMessages));
 		await tx.delete(mailboxes).where(and(eq(mailboxes.id, mailbox.id), ...inOrgMailboxes));
 	});
+
+	const usageOrgId = orgId ?? (await getUserOrganizationId(db, mailbox.userId));
+	await releaseStorageBytes(db, usageOrgId, attachmentBytes + rawBytes);
+	await releaseQuota(db, usageOrgId, { mailboxes: 1 });
 
 	const counts: MailboxDeleteCounts = { rules, objects, messages: messageIds.length };
 	await createAuditLog(env, {
