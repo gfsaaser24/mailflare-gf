@@ -55,10 +55,10 @@ export async function POST(request: Request) {
 		const result = await createOrganizationWithAdmin(guard.db, parsed.data, guard.user.id);
 		const response = NextResponse.json({
 			...result,
-			// No invite/reset mechanism exists yet (T3.5); this is the only time the
-			// password is ever shown.
-			passwordDeliveryNote:
-				"There is no password-reset flow yet, so this password is shown once. Give it to the new admin out of band; they can change it at /api/settings/password.",
+			// A new organisation has no mailbox to send from, so the invite cannot be
+			// emailed: the link is shown once and handed over out of band (T3.5).
+			inviteDeliveryNote:
+				"The new organisation has no mailbox yet, so this invite was not emailed. Copy the link and give it to the new admin; it works once and expires in 7 days.",
 		});
 		response.headers.set("Cache-Control", "no-store");
 		return response;

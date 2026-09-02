@@ -1,0 +1,828 @@
+openapi: 3.1.0
+info:
+  title: Mailflare v1 API
+  version: "1.0.0"
+  description: |
+    The public, agent-facing surface of Mailflare (`/api/v1/**`).
+
+    Every route authenticates with an API key (`Authorization: Bearer ep_...`)
+    and needs exactly one scope. Keys are issued in the dashboard under
+    **API Keys**, or through `POST /api/api-keys` with a cookie session.
+
+    - **Tenancy.** A key acts only inside the organisation it was issued in, and
+      only on the mailboxes its owner may open. Anything else reads as missing.
+    - **Errors.** Always `{ "error": "...", "code": "..." }`; `code` is a stable
+      machine-readable tag and may be absent on responses produced by the
+      authentication layer.
+    - **Paging.** Cursor-based. Pass the `nextCursor` of a page back as
+      `cursor`; `nextCursor: null` means the last page.
+    - **Rate limit.** 600 requests per minute per key. Over that, `429` with a
+      `Retry-After` header in seconds.
+  license:
+    name: MIT
+servers:
+  - url: https://mail.easyserver.net/api
+    description: Production
+  - url: http://localhost:3000/api
+    description: Local development
+security:
+  - apiKey: []
+tags:
+  - name: Mailboxes
+  - name: Conversations
+  - name: Messages
+  - name: Search
+  - name: Contacts
+  - name: Drafts
+
+paths:
+  /v1/mailboxes:
+    get:
+      tags: [Mailboxes]
+      summary: List reachable mailboxes
+      description: "Scope: `messages:read`."
+      operationId: listMailboxes
+      responses:
+        "200":
+          description: Every mailbox the key's owner may open.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mailboxes]
+                properties:
+                  mailboxes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Mailbox" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/conversations:
+    get:
+      tags: [Conversations]
+      summary: List conversations
+      description: "Newest activity first. Scope: `conversations:read`."
+      operationId: listConversations
+      parameters:
+        - name: mailboxId
+          in: query
+          description: Restrict to one mailbox. Omit to span every readable mailbox.
+          schema: { type: string, maxLength: 200 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/ConversationStatus" }
+        - name: assignedUserId
+          in: query
+          description: A user id, or `none` for unassigned conversations.
+          schema: { type: string, maxLength: 200 }
+        - name: q
+          in: query
+          description: Case-insensitive substring match on the subject.
+          schema: { type: string, maxLength: 200 }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: One page of conversations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversations, nextCursor, limit]
+                properties:
+                  conversations:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConversationListItem" }
+                  nextCursor: { type: [string, "null"] }
+                  limit: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/conversations/{id}:
+    get:
+      tags: [Conversations]
+      summary: Get one conversation with its messages and notes
+      description: "Scope: `conversations:read`."
+      operationId: getConversation
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: The conversation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversation]
+                properties:
+                  conversation: { $ref: "#/components/schemas/ConversationDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/conversations/{id}/reply:
+    post:
+      tags: [Conversations]
+      summary: Reply into a thread
+      description: |
+        Sends from the conversation's mailbox and threads the outbound message
+        into the same conversation, setting `In-Reply-To` and `References`.
+
+        Everything but the body is optional: the recipient defaults to the
+        newest stored counterpart on the thread, the subject to
+        `Re: <conversation subject>`, and `replyToMessageId` to the newest
+        message that carries a Message-ID.
+
+        Scope: `send`. Needs `send_on_behalf` on the mailbox.
+      operationId: replyToConversation
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplyRequest" }
+      responses:
+        "201":
+          description: The stored outbound message.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message: { $ref: "#/components/schemas/SentMessage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/SendFailed" }
+
+  /v1/conversations/{id}/assign:
+    post:
+      tags: [Conversations]
+      summary: Assign or unassign a conversation
+      description: |
+        The assignee must be in the same organisation and able to read the
+        mailbox. Scope: `conversations:write`.
+      operationId: assignConversation
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId:
+                  type: [string, "null"]
+                  maxLength: 200
+                  description: "`null` unassigns."
+      responses:
+        "200":
+          description: The updated conversation row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversation]
+                properties:
+                  conversation: { $ref: "#/components/schemas/Conversation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/conversations/{id}/notes:
+    get:
+      tags: [Conversations]
+      summary: List internal notes
+      description: "Oldest first. Scope: `conversations:read`."
+      operationId: listConversationNotes
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: The notes on the conversation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notes]
+                properties:
+                  notes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Note" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      tags: [Conversations]
+      summary: Add an internal note
+      description: "Never sent to the customer. Scope: `conversations:write`."
+      operationId: addConversationNote
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 10000 }
+      responses:
+        "201":
+          description: The stored note.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [note]
+                properties:
+                  note: { $ref: "#/components/schemas/Note" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/messages:
+    get:
+      tags: [Messages]
+      summary: List messages
+      description: "Newest first. Scope: `messages:read`."
+      operationId: listMessages
+      parameters:
+        - name: mailboxId
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [inbound, outbound] }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: The matching messages.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/Message" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/messages/{id}:
+    patch:
+      tags: [Messages]
+      summary: Update a message
+      description: |
+        `read` and `starred` need `read_only` on the mailbox; `status` and
+        `snoozedUntil` need `full_access`. Scope: `messages:write`.
+      operationId: updateMessage
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessagePatch" }
+      responses:
+        "200":
+          description: The updated fields.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message: { $ref: "#/components/schemas/MessageState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/search:
+    get:
+      tags: [Search]
+      summary: Full-text search over messages
+      description: |
+        Postgres full-text search (`websearch_to_tsquery` against a generated
+        `tsvector` over subject, participants and text body), best match first.
+        `q` accepts the usual web-search syntax: quoted phrases, `or`, and `-`
+        to exclude. Scope: `messages:read`.
+      operationId: searchMessages
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: mailboxId
+          in: query
+          description: Restrict to one mailbox. Omit to span every readable mailbox.
+          schema: { type: string, maxLength: 200 }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: One page of hits.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [query, hits, nextCursor, limit]
+                properties:
+                  query: { type: string }
+                  hits:
+                    type: array
+                    items: { $ref: "#/components/schemas/SearchHit" }
+                  nextCursor: { type: [string, "null"] }
+                  limit: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/contacts:
+    get:
+      tags: [Contacts]
+      summary: List contacts
+      description: |
+        Contacts of every mailbox owner the key's owner can reach, newest first.
+        Scope: `contacts:read`.
+      operationId: listContacts
+      parameters:
+        - name: q
+          in: query
+          description: Case-insensitive substring match on the address or display name.
+          schema: { type: string, maxLength: 200 }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: One page of contacts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [contacts, nextCursor, limit]
+                properties:
+                  contacts:
+                    type: array
+                    items: { $ref: "#/components/schemas/Contact" }
+                  nextCursor: { type: [string, "null"] }
+                  limit: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/drafts:
+    post:
+      tags: [Drafts]
+      summary: Create a draft
+      description: |
+        Stores an unsent outbound message. `from` defaults to the mailbox's own
+        address and is authorised exactly as a real send would be.
+        Scope: `messages:write`.
+      operationId: createDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DraftRequest" }
+      responses:
+        "201":
+          description: The stored draft.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [draft]
+                properties:
+                  draft: { $ref: "#/components/schemas/Draft" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /v1/send:
+    post:
+      tags: [Messages]
+      summary: Send a message
+      description: "Starts or continues a thread from an authorised mailbox. Scope: `send`."
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendRequest" }
+      responses:
+        "200":
+          description: The id of the stored outbound message.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messageId]
+                properties:
+                  messageId: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/SendFailed" }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: ep_...
+      description: |
+        `Authorization: Bearer ep_...`. Session cookies are never accepted here,
+        and a key is never accepted on the dashboard routes.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, maxLength: 200 }
+    Cursor:
+      name: cursor
+      in: query
+      description: The `nextCursor` of the previous page.
+      schema: { type: string, maxLength: 500 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100 }
+
+  responses:
+    BadRequest:
+      description: The request body or query string did not validate.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing, unknown, revoked or expired key.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            revoked: { value: { error: "API key revoked" } }
+            expired: { value: { error: "API key expired" } }
+            unknown: { value: { error: "Unauthorized" } }
+    Forbidden:
+      description: |
+        The key lacks the route's scope, its organisation is suspended, or its
+        owner lacks the required rank on the mailbox.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            scope: { value: { error: "Insufficient scope" } }
+            rank: { value: { error: "Forbidden", code: "forbidden" } }
+    NotFound:
+      description: |
+        No such row inside this organisation, or one in a mailbox the key's
+        owner cannot read — the two are deliberately indistinguishable.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: The request body exceeded the route's limit.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: More than 600 requests in a minute on this key.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "Rate limit exceeded", code: "rate_limited" }
+    SendFailed:
+      description: The transport rejected the message.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          description: Stable machine-readable tag; absent on authentication errors.
+          enum:
+            - invalid_body
+            - invalid_query
+            - invalid_assignee
+            - no_recipient
+            - not_found
+            - forbidden
+            - payload_too_large
+            - rate_limited
+            - send_failed
+
+    MailboxPermission:
+      type: string
+      enum: [read_only, send_on_behalf, send_as, full_access]
+
+    ConversationStatus:
+      type: string
+      enum: [open, closed, snoozed]
+
+    Direction:
+      type: string
+      enum: [inbound, outbound]
+
+    MessageStatus:
+      type: string
+      enum: [received, sent, draft, trash, spam]
+
+    Mailbox:
+      type: object
+      required: [id, address, type, permission, isPrimary, createdAt]
+      properties:
+        id: { type: string }
+        address: { type: string, format: email }
+        displayName: { type: [string, "null"] }
+        type: { type: string, enum: [personal, shared] }
+        permission: { $ref: "#/components/schemas/MailboxPermission" }
+        isPrimary: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    UserRef:
+      type: [object, "null"]
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: [string, "null"] }
+
+    Conversation:
+      description: The raw conversation row, as returned by assignment.
+      type: object
+      required: [id, mailboxId, status, messageCount, createdAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        mailboxId: { type: string }
+        subject: { type: [string, "null"] }
+        subjectNormalized: { type: string }
+        status: { $ref: "#/components/schemas/ConversationStatus" }
+        assignedUserId: { type: [string, "null"] }
+        snoozedUntil: { type: [string, "null"], format: date-time }
+        lastMessageAt: { type: [string, "null"], format: date-time }
+        messageCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+
+    ConversationListItem:
+      type: object
+      required: [id, mailboxId, status, messageCount, unreadCount, createdAt]
+      properties:
+        id: { type: string }
+        mailboxId: { type: string }
+        subject: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/ConversationStatus" }
+        snoozedUntil: { type: [string, "null"], format: date-time }
+        lastMessageAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        messageCount: { type: integer }
+        unreadCount: { type: integer }
+        assignee: { $ref: "#/components/schemas/UserRef" }
+        lastMessage:
+          type: [object, "null"]
+          required: [id, direction, from, to, read, createdAt]
+          properties:
+            id: { type: string }
+            direction: { $ref: "#/components/schemas/Direction" }
+            from: { type: string }
+            to: { type: string }
+            snippet: { type: [string, "null"] }
+            read: { type: boolean }
+            createdAt: { type: string, format: date-time }
+
+    ConversationDetail:
+      allOf:
+        - $ref: "#/components/schemas/ConversationListItem"
+        - type: object
+          required: [messages, notes]
+          properties:
+            messages:
+              type: array
+              description: Oldest first.
+              items: { $ref: "#/components/schemas/ConversationMessage" }
+            notes:
+              type: array
+              items: { $ref: "#/components/schemas/Note" }
+
+    ConversationMessage:
+      type: object
+      required: [id, direction, from, to, read, createdAt]
+      properties:
+        id: { type: string }
+        direction: { $ref: "#/components/schemas/Direction" }
+        from: { type: string }
+        to: { type: string }
+        subject: { type: [string, "null"] }
+        snippet: { type: [string, "null"] }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    Note:
+      type: object
+      required: [id, body, createdAt]
+      properties:
+        id: { type: string }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+        author: { $ref: "#/components/schemas/UserRef" }
+
+    Message:
+      type: object
+      required: [id, userId, direction, fromAddr, toAddr, status, read, starred, createdAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        userId: { type: string }
+        mailboxId: { type: [string, "null"] }
+        direction: { $ref: "#/components/schemas/Direction" }
+        providerMessageId: { type: [string, "null"] }
+        folderId: { type: [string, "null"] }
+        fromAddr: { type: string }
+        toAddr: { type: string }
+        subject: { type: [string, "null"] }
+        snippet: { type: [string, "null"] }
+        textBody: { type: [string, "null"] }
+        htmlBody: { type: [string, "null"] }
+        rawR2Key: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/MessageStatus" }
+        read: { type: boolean }
+        starred: { type: boolean }
+        snoozedUntil: { type: [string, "null"], format: date-time }
+        threadId: { type: [string, "null"] }
+        conversationId: { type: [string, "null"] }
+        inReplyTo: { type: [string, "null"] }
+        referencesHeader:
+          type: [array, "null"]
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    MessageState:
+      type: object
+      required: [id, read, starred, status]
+      properties:
+        id: { type: string }
+        mailboxId: { type: [string, "null"] }
+        conversationId: { type: [string, "null"] }
+        read: { type: boolean }
+        starred: { type: boolean }
+        status: { $ref: "#/components/schemas/MessageStatus" }
+        snoozedUntil: { type: [string, "null"], format: date-time }
+
+    MessagePatch:
+      type: object
+      minProperties: 1
+      properties:
+        read: { type: boolean }
+        starred: { type: boolean }
+        status: { $ref: "#/components/schemas/MessageStatus" }
+        snoozedUntil:
+          type: [string, "null"]
+          format: date-time
+          description: An ISO timestamp in the future, or `null` to clear the snooze.
+
+    SentMessage:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        conversationId: { type: [string, "null"] }
+        inReplyTo: { type: [string, "null"] }
+        status: { $ref: "#/components/schemas/MessageStatus" }
+
+    ReplyRequest:
+      type: object
+      description: One of `text` or `html` is required.
+      anyOf:
+        - required: [text]
+        - required: [html]
+      properties:
+        to:
+          type: string
+          maxLength: 500
+          description: Defaults to the newest counterpart on the thread.
+        subject:
+          type: string
+          maxLength: 500
+          description: "Defaults to `Re: <conversation subject>`."
+        text: { type: string }
+        html: { type: string }
+        replyToMessageId:
+          type: string
+          maxLength: 200
+          description: Defaults to the newest message on the thread with a Message-ID.
+
+    SearchHit:
+      type: object
+      required: [id, direction, from, to, createdAt, rank]
+      properties:
+        id: { type: string }
+        mailboxId: { type: [string, "null"] }
+        conversationId: { type: [string, "null"] }
+        direction: { $ref: "#/components/schemas/Direction" }
+        from: { type: string }
+        to: { type: string }
+        subject: { type: [string, "null"] }
+        snippet: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        rank:
+          type: number
+          description: "`ts_rank` of the hit; higher is a better match."
+
+    Contact:
+      type: object
+      required: [id, email, source, blocked, createdAt]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        displayName: { type: [string, "null"] }
+        source: { type: string, enum: [manual, inbound, outbound] }
+        blocked: { type: boolean }
+        lastSeenAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+
+    DraftRequest:
+      type: object
+      required: [mailboxId]
+      properties:
+        mailboxId: { type: string, maxLength: 200 }
+        from:
+          type: string
+          maxLength: 500
+          description: Defaults to the mailbox's own address.
+        to: { type: string, maxLength: 500 }
+        subject: { type: string, maxLength: 500 }
+        text: { type: string }
+        html: { type: string }
+
+    Draft:
+      type: object
+      required: [id, mailboxId, from, to, status]
+      properties:
+        id: { type: string }
+        mailboxId: { type: string }
+        from: { type: string }
+        to: { type: string }
+        subject: { type: [string, "null"] }
+        status: { type: string, const: draft }
+
+    SendRequest:
+      type: object
+      required: [from, to, subject, mailboxId]
+      properties:
+        from: { type: string, minLength: 3, maxLength: 500 }
+        to: { type: string, minLength: 3, maxLength: 500 }
+        subject: { type: string, minLength: 1, maxLength: 500 }
+        mailboxId: { type: string, minLength: 1, maxLength: 200 }
+        text: { type: string }
+        html: { type: string }
+        attachments:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            required: [filename, contentBase64]
+            properties:
+              filename: { type: string, minLength: 1, maxLength: 255 }
+              type: { type: string, default: application/octet-stream }
+              contentBase64: { type: string }

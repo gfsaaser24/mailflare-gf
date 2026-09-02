@@ -133,6 +133,8 @@ export type OrgPrincipal = SessionUser & {
 	kind: "session" | "api_key";
 	/** API-key scopes. Cookie sessions get `["*"]`. */
 	scopes: string[];
+	/** `api_keys.id` when `kind` is `api_key`; null for cookie sessions. */
+	apiKeyId: string | null;
 };
 
 export type OrgContext = {
@@ -200,7 +202,7 @@ export function withOrg<T extends RouteContext = RouteContext>(
 		if (sessionUser) {
 			// Disabled accounts are treated as unauthenticated, never as forbidden.
 			if (sessionUser.disabled) return json("Unauthorized", 401);
-			principal = { ...sessionUser, kind: "session", scopes: ["*"] };
+			principal = { ...sessionUser, kind: "session", scopes: ["*"], apiKeyId: null };
 		} else if (options.allowApiKey) {
 			const auth = await authenticateApiKey(env, request.headers.get("authorization"), request);
 			// A revoked or expired key is a real key in a bad state: say so, rather
@@ -216,6 +218,7 @@ export function withOrg<T extends RouteContext = RouteContext>(
 					organizationId: auth.organizationId,
 					kind: "api_key",
 					scopes: auth.scopes,
+					apiKeyId: auth.apiKeyId,
 				};
 			}
 		}

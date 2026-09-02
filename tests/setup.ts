@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterAll, beforeEach } from "vitest";
+import { afterAll, beforeAll, beforeEach } from "vitest";
 import { closeTestDatabase, hasTestDatabase, truncateAll } from "./helpers/db";
 
 /** Minimal .env loader: fills only the keys that are not already set. */
@@ -29,6 +29,10 @@ function loadEnvFile(file: string): void {
 }
 
 if (!process.env.TEST_DATABASE_URL) loadEnvFile(".env.local");
+
+beforeAll(async () => {
+	if (!hasTestDatabase()) return;
+});
 
 beforeEach(async () => {
 	if (!hasTestDatabase()) return;

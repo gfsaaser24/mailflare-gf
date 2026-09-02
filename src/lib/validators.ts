@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WEBHOOK_EVENTS } from "@/lib/webhooks/events";
 import { DEFAULT_FOLDER_COLOR, FOLDER_COLOR_VALUES } from "@/lib/folders/colors";
 
 export const sendEmailSchema = z.object({
@@ -88,11 +89,37 @@ export const createAccountSchema = z.object({
 	),
 });
 
-export const createUserAccountSchema = z.object({
-	username: z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9._%+-]+$/),
-	domainId: z.string().min(1),
+/**
+ * `POST /api/accounts`. With `sendInvite` the account is created with a random
+ * password nobody is told, and the user sets their own through the invite link
+ * (T3.5); `password` is then neither needed nor accepted as a substitute.
+ */
+export const createUserAccountSchema = z
+	.object({
+		username: z.string().trim().min(1).max(64).regex(/^[a-zA-Z0-9._%+-]+$/),
+		domainId: z.string().min(1),
+		password: z.string().min(8).max(128).optional(),
+		role: z.enum(["admin", "user"]).default("user"),
+		sendInvite: z.boolean().default(false),
+	})
+	.superRefine((value, ctx) => {
+		if (!value.sendInvite && !value.password) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["password"],
+				message: "A password is required unless the account is invited",
+			});
+		}
+	});
+
+/** `POST /api/invites/[token]/accept`. */
+export const acceptInviteSchema = z.object({
 	password: z.string().min(8).max(128),
-	role: z.enum(["admin", "user"]).default("user"),
+});
+
+/** `POST /api/accounts/[id]/transfer`. */
+export const transferAccountSchema = z.object({
+	toUserId: z.string().min(1),
 });
 
 export const updateAccountSchema = z.object({
@@ -174,13 +201,27 @@ export const routingRuleSchema = z.object({
 	priority: z.number().int().default(0),
 });
 
+/**
+ * T6.3 — the event list is validated against the catalogue in
+ * `@/lib/webhooks/events`, so a new event only has to be added there.
+ */
+export const webhookEventSchema = z.enum(WEBHOOK_EVENTS);
+
 export const webhookSchema = z.object({
 	url: z.string().url().max(2048),
-	events: z
-		.array(z.enum(["message.inbound", "message.outbound", "message.failed"]))
-		.min(1)
-		.max(3),
+	events: z.array(webhookEventSchema).min(1).max(WEBHOOK_EVENTS.length),
+	description: z.string().max(200).nullish(),
 });
+
+/** PATCH /api/webhooks/[id] — every field optional, at least one required. */
+export const webhookUpdateSchema = z
+	.object({
+		url: z.string().url().max(2048).optional(),
+		events: z.array(webhookEventSchema).min(1).max(WEBHOOK_EVENTS.length).optional(),
+		description: z.string().max(200).nullish(),
+		enabled: z.boolean().optional(),
+	})
+	.refine((value) => Object.keys(value).length > 0, { message: "No fields to update" });
 
 /* T2.2 — conversation API (internal). */
 

@@ -1,4 +1,4 @@
-export type AuthActivityAction = "auth.login" | "auth.logout";
+export type AuthActivityAction = "auth.login" | "auth.logout" | "auth.invite_accepted";
 
 export type AuthActivityMetadata = {
 	ipAddress: string;

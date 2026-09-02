@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { mailboxes, users } from "@/db/schema";
+import { generateRandomPassword, issueInvite } from "@/lib/accounts/service";
 import { withOrg } from "@/lib/api/with-org";
 import { hashPassword } from "@/lib/auth/password";
 import { newId } from "@/lib/ids";
@@ -63,6 +64,9 @@ export const POST = withOrg(async (ctx, request) => {
 	}
 
 	const userId = newId("usr");
+	// An invited account gets a random password nobody ever sees; the invite is
+	// the only way in until the user sets their own.
+	const password = input.sendInvite ? generateRandomPassword() : (input.password as string);
 	try {
 		await ensureEmailRoutingRuleToWorker(env, domain.zoneId, email);
 		const [account] = await db
@@ -71,7 +75,7 @@ export const POST = withOrg(async (ctx, request) => {
 				insertValues(users, {
 					id: userId,
 					email,
-					passwordHash: hashPassword(input.password),
+					passwordHash: hashPassword(password),
 					name: username,
 					role: input.role,
 					createdByUserId: ctx.user.id,
@@ -103,7 +107,30 @@ export const POST = withOrg(async (ctx, request) => {
 			ctx.orgId,
 		);
 
-		return NextResponse.json({ account: accountListItemFromUser(account) }, { status: 201 });
+		if (!input.sendInvite) {
+			return NextResponse.json({ account: accountListItemFromUser(account) }, { status: 201 });
+		}
+
+		// The mailbox above is normally the org's first sending address, so the
+		// invite is issued after it exists.
+		const { delivery } = await issueInvite(env, db, {
+			organizationId: ctx.orgId,
+			userId,
+			email,
+			name: username,
+			createdByUserId: ctx.user.id,
+		});
+		const response = NextResponse.json(
+			{
+				account: accountListItemFromUser(account),
+				inviteSent: delivery.sent,
+				// Only when the mail could not go out: the admin passes the link on.
+				...(delivery.sent ? {} : { inviteUrl: delivery.url, inviteMessage: delivery.reason }),
+			},
+			{ status: 201 },
+		);
+		response.headers.set("Cache-Control", "no-store");
+		return response;
 	} catch (error) {
 		await db.delete(users).where(and(ctx.scoped(users), eq(users.id, userId)));
 		await releaseQuota(db, ctx.orgId, quotaIncrement);

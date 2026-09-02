@@ -31,9 +31,10 @@ export type QuotaTemplate = (typeof QUOTA_TEMPLATES)[number];
 export type CreateOrganizationResponse = {
 	organization: { id: string; name: string; slug: string; status: "active" | "suspended" };
 	admin: { id: string; email: string; name: string };
-	temporaryPassword: string;
+	/** Set-password link for the new admin, shown once (T3.5). */
+	inviteUrl: string;
 	quotaTemplate: QuotaTemplate | null;
-	passwordDeliveryNote?: string;
+	inviteDeliveryNote?: string;
 };
 
 /** The subset of `/api/auth/me` the platform console cares about. */

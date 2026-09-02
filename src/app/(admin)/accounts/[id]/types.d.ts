@@ -40,3 +40,21 @@ export type AccountMailboxAccessResponse = {
 	mailboxes: AccountMailboxAccessItem[];
 	error?: string;
 };
+
+/** `POST /api/accounts/[id]/invite` (T3.5). */
+export type InviteActionResult = {
+	ok?: boolean;
+	inviteSent?: boolean;
+	/** Only when the invite could not be emailed: hand this link over. */
+	inviteUrl?: string;
+	inviteMessage?: string;
+	error?: string;
+};
+
+/** A candidate owner for `POST /api/accounts/[id]/transfer`. */
+export type TransferTarget = {
+	id: string;
+	name: string;
+	email: string;
+	disabled?: boolean;
+};

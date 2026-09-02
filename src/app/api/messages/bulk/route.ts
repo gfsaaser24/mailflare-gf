@@ -4,6 +4,7 @@ import { folders, messages } from "@/db/schema";
 import { withOrg } from "@/lib/api/with-org";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import { createAuditLog } from "@/lib/mailboxes/audit";
+import { deleteMessagesPermanently } from "@/lib/retention/service";
 import type { BulkMessagePayload } from "./types";
 import {
 	getReadValueForBulkAction,
@@ -49,7 +50,8 @@ export const POST = withOrg(async ({ env, db, user, orgId, scoped }, request) =>
 		...(folderId !== undefined ? { folderId } : {}),
 	};
 
-	if (Object.keys(values).length === 0) {
+	// `delete` writes nothing, it removes; every other action must change something.
+	if (payload.action !== "delete" && Object.keys(values).length === 0) {
 		return NextResponse.json({ error: "No changes requested" }, { status: 400 });
 	}
 
@@ -60,7 +62,14 @@ export const POST = withOrg(async ({ env, db, user, orgId, scoped }, request) =>
 	const allowedMessageIds: string[] = [];
 
 	for (const message of selectedMessages) {
-		if (!message.mailboxId) continue;
+		if (!message.mailboxId) {
+			// A message with no mailbox (a draft) belongs to its author alone, and
+			// only the permanent delete has anything to do with it.
+			if (payload.action === "delete" && message.userId === user.id) {
+				allowedMessageIds.push(message.id);
+			}
+			continue;
+		}
 		const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
 		const canUpdate = payload.action === "read" || payload.action === "unread" ? access?.canRead : access?.canManage;
 		if (!canUpdate) continue;
@@ -69,6 +78,24 @@ export const POST = withOrg(async ({ env, db, user, orgId, scoped }, request) =>
 
 	if (allowedMessageIds.length === 0) {
 		return NextResponse.json({ error: "No accessible messages" }, { status: 404 });
+	}
+
+	// Permanent delete (empty trash) goes through the one delete path, which also
+	// removes the raw objects and attachments and refunds the storage bytes.
+	if (payload.action === "delete") {
+		const counts = await deleteMessagesPermanently(env, orgId, allowedMessageIds);
+		await Promise.all(
+			allowedMessageIds.map((messageId) =>
+				createAuditLog(env, {
+					actorUserId: user.id,
+					// The message rows are gone, so they cannot be referenced.
+					messageId: null,
+					action: "email.delete",
+					metadata: { messageId, bulkAction: payload.action, permanent: true },
+				}),
+			),
+		);
+		return NextResponse.json({ ok: true, ...counts });
 	}
 
 	await db

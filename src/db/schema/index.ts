@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, integer, bigint, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { DEFAULT_ORGANIZATION_ID } from "../../lib/organizations/constants";
+import { tsvector } from "../types";
 
 export const organizations = pgTable(
 	"organizations",
@@ -319,9 +320,19 @@ export const messages = pgTable(
 		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
+		/**
+		 * Full-text index over subject + participants + text body (T6.2).
+		 *
+		 * `GENERATED ALWAYS AS (...) STORED`, so Postgres maintains it and the app
+		 * never writes to it. drizzle-kit cannot express the generation
+		 * expression: the exact DDL the migration needs is at the top of
+		 * `src/lib/search/service.ts`.
+		 */
+		searchVector: tsvector("search_vector"),
 	},
 	(t) => [
 		index("messages_user_created_idx").on(t.userId, t.createdAt),
+		index("messages_search_idx").using("gin", t.searchVector),
 		index("messages_organization_mailbox_created_idx").on(t.organizationId, t.mailboxId, t.createdAt),
 		index("messages_conversation_idx").on(t.conversationId, t.createdAt),
 		index("messages_mailbox_idx").on(t.mailboxId),
@@ -451,6 +462,8 @@ export const webhooks = pgTable("webhooks", {
 	url: text("url").notNull(),
 	secret: text("secret").notNull(),
 	events: text("events").notNull(),
+	/** Free-text label so an operator can tell two endpoints apart. */
+	description: text("description"),
 	enabled: boolean("enabled").notNull().default(true),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
@@ -464,8 +477,16 @@ export const webhookDeliveries = pgTable("webhook_deliveries", {
 		.references(() => webhooks.id, { onDelete: "cascade" }),
 	eventType: text("event_type").notNull(),
 	payload: text("payload").notNull(),
+	/** `pending` | `delivered` | `dead`. `pending` rows are retried. */
 	status: text("status").notNull().default("pending"),
 	attempts: integer("attempts").notNull().default(0),
+	/** When the retry worker may try again. Null once delivered or dead. */
+	nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }),
+	/** Transport error or non-2xx body summary from the last attempt. */
+	lastError: text("last_error"),
+	/** HTTP status of the last attempt, null when the request never completed. */
+	responseStatus: integer("response_status"),
+	deliveredAt: timestamp("delivered_at", { withTimezone: true, mode: "date" }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
@@ -656,6 +677,66 @@ export const orgUsage = pgTable("org_usage", {
 		.$defaultFn(() => new Date()),
 });
 
+/**
+ * Per-organisation retention windows (T5.2).
+ *
+ * Every column is a number of days. A missing row means the defaults below,
+ * which are also the defaults `getRetention()` returns, so an organisation that
+ * has never opened the settings behaves exactly like one that saved them
+ * unchanged. `scripts/retention.ts` reads these once per run.
+ */
+export const orgRetention = pgTable("org_retention", {
+	organizationId: text("organization_id")
+		.primaryKey()
+		.references(() => organizations.id, { onDelete: "cascade" }),
+	/** Days a message may sit in `status = 'trash'` before it is really deleted. */
+	trashDays: integer("trash_days").notNull().default(30),
+	/** Days an expired session row is kept after `expires_at`. */
+	sessionsDays: integer("sessions_days").notNull().default(7),
+	webhookDeliveriesDays: integer("webhook_deliveries_days").notNull().default(30),
+	/** `platform.*` actions are never deleted, whatever this says. */
+	auditLogsDays: integer("audit_logs_days").notNull().default(365),
+	autoReplyDays: integer("auto_reply_days").notNull().default(30),
+	outboundJobsDays: integer("outbound_jobs_days").notNull().default(30),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+		.notNull()
+		.$defaultFn(() => new Date()),
+});
+
+/**
+ * Set-password invites (T3.5).
+ *
+ * One row per invite: `token_hash` is the SHA-256 hex of a 32-byte random token
+ * that is shown to the inviter (or emailed) exactly once. `accepted_at` marks it
+ * spent; accepting also clears every other pending invite for that user.
+ */
+export const userInvites = pgTable(
+	"user_invites",
+	{
+		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		tokenHash: text("token_hash").notNull().unique(),
+		expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+		acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "date" }),
+		createdByUserId: text("created_by_user_id").references(() => users.id, {
+			onDelete: "set null",
+		}),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+			.notNull()
+			.$defaultFn(() => new Date()),
+	},
+	(t) => [
+		index("user_invites_user_idx").on(t.userId),
+		index("user_invites_organization_idx").on(t.organizationId),
+	],
+);
+
 export const schema = {
 	organizations,
 	users,
@@ -684,4 +765,6 @@ export const schema = {
 	inboundFailures,
 	orgQuotas,
 	orgUsage,
+	orgRetention,
+	userInvites,
 };

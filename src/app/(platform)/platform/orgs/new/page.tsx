@@ -58,10 +58,10 @@ export default function NewOrganizationPage() {
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["platform", "orgs"] }),
 	});
 
-	async function copyPassword() {
+	async function copyInviteUrl() {
 		if (!create.data) return;
 		try {
-			await navigator.clipboard.writeText(create.data.temporaryPassword);
+			await navigator.clipboard.writeText(create.data.inviteUrl);
 			setCopied(true);
 			window.setTimeout(() => setCopied(false), 2000);
 		} catch {
@@ -83,17 +83,17 @@ export default function NewOrganizationPage() {
 				<div className="rounded-3xl bg-white p-5">
 					<p className="flex items-center gap-2 text-sm font-semibold text-amber-700">
 						<TriangleAlert className="h-4 w-4" />
-						This password is shown once
+						This invite link is shown once
 					</p>
 					<p className="mt-2 text-sm text-neutral-500">
-						{result.passwordDeliveryNote ??
-							"There is no password-reset flow yet. Copy it now and hand it to the new admin out of band."}
+						{result.inviteDeliveryNote ??
+							"The new organisation has no mailbox yet, so this invite was not emailed. Copy the link and hand it to the new admin; it works once and expires in 7 days."}
 					</p>
 					<div className="mt-4 flex items-center gap-2">
 						<code className="min-w-0 flex-1 truncate rounded-xl bg-neutral-100 px-3 py-2 text-sm">
-							{result.temporaryPassword}
+							{result.inviteUrl}
 						</code>
-						<Button type="button" variant="outline" onClick={copyPassword}>
+						<Button type="button" variant="outline" onClick={copyInviteUrl}>
 							{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
 							{copied ? "Copied" : "Copy"}
 						</Button>

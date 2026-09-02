@@ -7,10 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { ManagedAccount } from "./types";
+import { Select } from "@/components/ui/select";
+import type { ManagedAccount, TransferTarget } from "./types";
 import {
 	fetchManagedAccount,
+	fetchTransferTargets,
+	resendManagedAccountInvite,
 	saveManagedAccount,
+	transferManagedAccount,
 	uploadManagedAccountAvatar,
 } from "./utils";
 
@@ -20,12 +24,54 @@ export default function AccountDetailsPage() {
 	const [saving, setSaving] = useState(false);
 	const [message, setMessage] = useState<string | null>(null);
 	const [avatarVersion, setAvatarVersion] = useState(0);
+	const [targets, setTargets] = useState<TransferTarget[]>([]);
+	const [transferTo, setTransferTo] = useState("");
+	const [transferring, setTransferring] = useState(false);
+	const [inviting, setInviting] = useState(false);
+	const [inviteUrl, setInviteUrl] = useState<string | null>(null);
 
 	useEffect(() => {
 		void fetchManagedAccount(id)
 			.then(setAccount)
 			.catch((error) => setMessage(error instanceof Error ? error.message : "Unable to load account"));
+		void fetchTransferTargets(id)
+			.then(setTargets)
+			.catch(() => setTargets([]));
 	}, [id]);
+
+	async function resendInvite() {
+		setInviting(true);
+		setMessage(null);
+		setInviteUrl(null);
+		try {
+			const result = await resendManagedAccountInvite(id);
+			if (result.inviteSent) {
+				setMessage("Invite emailed. The link works once and expires in 7 days.");
+			} else {
+				setInviteUrl(result.inviteUrl ?? null);
+				setMessage(result.inviteMessage ?? "The invite was not emailed; copy the link below.");
+			}
+		} catch (error) {
+			setMessage(error instanceof Error ? error.message : "Unable to send the invite");
+		} finally {
+			setInviting(false);
+		}
+	}
+
+	async function transferOwnership() {
+		if (!transferTo) return;
+		setTransferring(true);
+		setMessage(null);
+		try {
+			await transferManagedAccount(id, transferTo);
+			setMessage("Ownership transferred.");
+			setTransferTo("");
+		} catch (error) {
+			setMessage(error instanceof Error ? error.message : "Unable to transfer ownership");
+		} finally {
+			setTransferring(false);
+		}
+	}
 
 	async function saveDetails() {
 		if (!account) return;
@@ -104,6 +150,46 @@ export default function AccountDetailsPage() {
 				<Button onClick={() => void saveDetails()} disabled={saving || !account.name.trim()}>
 					{saving ? "Saving..." : "Save details"}
 				</Button>
+			</section>
+			<section className="space-y-5 rounded-3xl bg-white p-6">
+				<div>
+					<h2 className="text-lg font-medium text-neutral-900">Access</h2>
+					<p className="mt-1 text-sm text-neutral-500">
+						Send a fresh set-password link, or hand this account&apos;s mailboxes and
+						conversations to somebody else before you disable it.
+					</p>
+				</div>
+				<div className="space-y-2">
+					<Button variant="outline" onClick={() => void resendInvite()} disabled={inviting || account.disabled}>
+						{inviting ? "Sending..." : "Resend invite"}
+					</Button>
+					{inviteUrl && (
+						<code className="block truncate rounded-xl bg-neutral-100 px-3 py-2 text-sm">
+							{inviteUrl}
+						</code>
+					)}
+				</div>
+				<div className="space-y-2">
+					<Label htmlFor="transfer-to">Transfer ownership...</Label>
+					<div className="flex gap-2">
+						<Select
+							id="transfer-to"
+							value={transferTo}
+							onChange={(event) => setTransferTo(event.target.value)}
+							className="h-10 w-full rounded-md border border-neutral-200 bg-white px-3 text-sm"
+						>
+							<option value="">Select an account</option>
+							{targets.map((target) => (
+								<option key={target.id} value={target.id}>
+									{target.name} ({target.email})
+								</option>
+							))}
+						</Select>
+						<Button variant="outline" onClick={() => void transferOwnership()} disabled={transferring || !transferTo}>
+							{transferring ? "Transferring..." : "Transfer"}
+						</Button>
+					</div>
+				</div>
 			</section>
 			{message && <p className="text-sm text-neutral-500">{message}</p>}
 		</div>

@@ -22,8 +22,11 @@ export type CreateAccountResult = {
 export type CreateUserAccountInput = {
 	username: string;
 	domainId: string;
-	password: string;
+	/** Absent when `sendInvite` is set: the invited user picks their own. */
+	password?: string;
 	role: "admin" | "user";
+	/** Email a set-password invite instead of using `password` (T3.5). */
+	sendInvite: boolean;
 };
 
 export type AccountListResponse = {

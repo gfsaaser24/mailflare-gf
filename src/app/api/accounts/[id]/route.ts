@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { and, eq, ne, sql } from "drizzle-orm";
 
 import { users } from "@/db/schema";
+import { disableUser } from "@/lib/accounts/service";
 import { withOrg } from "@/lib/api/with-org";
 import { updateManagedAccountSchema } from "@/lib/validators";
 import { requireTeamAdmin } from "../utils";
@@ -80,5 +81,8 @@ export const PATCH = withOrg<AccountRouteParams>(async (ctx, request, { params }
 	if (result === "last-admin") {
 		return NextResponse.json({ error: "This instance must keep at least one active admin" }, { status: 409 });
 	}
+	// Disabling is not just a flag: `disableUser` also revokes every session the
+	// account still holds, so it is out now rather than at the next expiry (T3.5).
+	if (parsed.data.disabled) await disableUser(db, orgId, id);
 	return NextResponse.json({ ok: true });
 });

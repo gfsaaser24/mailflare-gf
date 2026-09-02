@@ -9,6 +9,8 @@ import { getClientIp } from "@/lib/http/ip";
 const API_KEY_PREFIX = "ep_";
 
 export type ApiAuthResult = {
+	/** `api_keys.id` of the key that authenticated the request. */
+	apiKeyId: string;
 	userId: string;
 	email: string;
 	/**
@@ -81,6 +83,7 @@ export async function authenticateApiKey(
 			.catch(() => {});
 
 		return {
+			apiKeyId: candidate.id,
 			userId: user.id,
 			email: user.email,
 			organizationId: candidate.organizationId,

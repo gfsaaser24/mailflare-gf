@@ -21,5 +21,10 @@ export type Account = {
 export type AccountResponse = {
 	accounts?: Account[];
 	account?: Account;
+	/** T3.5: true when the set-password invite was emailed. */
+	inviteSent?: boolean;
+	/** Only when the invite could **not** be emailed; the admin passes it on. */
+	inviteUrl?: string;
+	inviteMessage?: string;
 	error?: string;
 };

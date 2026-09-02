@@ -26,6 +26,7 @@ import { and, count, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/db";
 import { mailboxes, orgQuotas, orgUsage } from "@/db/schema";
 import { QuotaExceededError, type QuotaKind } from "./errors";
+import { notifyQuotaWarnings } from "./warnings";
 import {
 	quotaTemplateLimits,
 	UNLIMITED_QUOTA,
@@ -270,7 +271,7 @@ export async function withQuota<T>(
 	organizationId: string,
 	fn: (usage: QuotaUsage, quota: QuotaLimits, tx: QuotaTx) => Promise<QuotaOutcome<T>> | QuotaOutcome<T>,
 ): Promise<T> {
-	return db.transaction(async (tx) => {
+	const committed = await db.transaction(async (tx) => {
 		const today = utcDayKey();
 		const usage = rollDay(await lockUsage(tx, organizationId), today);
 		const quota = await getOrganizationQuota(tx, organizationId);
@@ -278,8 +279,15 @@ export async function withQuota<T>(
 		const increment = outcome.increment ?? {};
 		await assertIncrementFits(tx, organizationId, usage, quota, increment);
 		await applyIncrement(tx, organizationId, usage, increment, today);
-		return outcome.value;
+		return { value: outcome.value, usage, quota, increment };
 	});
+	// T6.3: fires `quota.warning` when this increment crosses 80% of a limit.
+	// Runs AFTER commit: the listener opens its own connection, and doing that while
+	// holding the FOR UPDATE row inside the transaction can exhaust the pool.
+	notifyQuotaWarnings(organizationId, committed.usage, committed.quota, committed.increment).catch((error) =>
+		console.error("quota warning listener failed", error),
+	);
+	return committed.value;
 }
 
 /** Checks and books an increment in one go. */

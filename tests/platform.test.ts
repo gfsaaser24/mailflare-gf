@@ -24,6 +24,7 @@ import {
 import { SESSION_COOKIE, createSession } from "@/lib/auth/session";
 import { IMPERSONATION_TTL_MS } from "@/lib/platform/service";
 import { createDb, hasTestDatabase } from "./helpers/db";
+import { ensureUserInvitesTable } from "./helpers/user-invites";
 
 /** Cookie jar backing the mocked `next/headers`. */
 const cookieJar = new Map<string, string>();
@@ -270,7 +271,8 @@ async function platformRoutes(): Promise<Array<{ name: string; call: () => Promi
 }
 
 describe.skipIf(!hasTestDatabase())("platform plane (T3.3)", () => {
-	beforeAll(() => {
+	beforeAll(async () => {
+		await ensureUserInvitesTable();
 		// The route handlers build their env from process.env.
 		process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 		// `getEnv()` refuses a half-configured mail transport; these tests send no mail.
@@ -376,13 +378,14 @@ describe.skipIf(!hasTestDatabase())("platform plane (T3.3)", () => {
 		const body = (await created.json()) as {
 			organization: { id: string; slug: string };
 			admin: { id: string; email: string };
-			temporaryPassword: string;
+			inviteUrl: string;
 			quotaTemplate: string | null;
 		};
 		expect(body.organization.slug).toBe("globex");
 		expect(body.quotaTemplate).toBe("standard");
-		// No reset/invite mechanism exists yet, so the password is returned once.
-		expect(body.temporaryPassword.length).toBeGreaterThan(16);
+		// T3.5: no password is ever shown; the operator hands over a one-shot
+		// set-password link instead.
+		expect(body.inviteUrl).toContain("/invite/");
 
 		const db = createDb();
 		const [admin] = await db.select().from(users).where(eq(users.id, body.admin.id));

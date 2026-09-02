@@ -31,8 +31,34 @@ export const GET = withOrg(
 			conditions.push(eq(messages.direction, direction));
 		}
 
+		// Explicit columns: `messages.search_vector` is a generated FTS column and
+		// has no business in an API response.
 		const rows = await db
-			.select()
+			.select({
+				id: messages.id,
+				organizationId: messages.organizationId,
+				userId: messages.userId,
+				mailboxId: messages.mailboxId,
+				direction: messages.direction,
+				providerMessageId: messages.providerMessageId,
+				folderId: messages.folderId,
+				fromAddr: messages.fromAddr,
+				toAddr: messages.toAddr,
+				subject: messages.subject,
+				snippet: messages.snippet,
+				textBody: messages.textBody,
+				htmlBody: messages.htmlBody,
+				rawR2Key: messages.rawR2Key,
+				status: messages.status,
+				read: messages.read,
+				starred: messages.starred,
+				snoozedUntil: messages.snoozedUntil,
+				threadId: messages.threadId,
+				conversationId: messages.conversationId,
+				inReplyTo: messages.inReplyTo,
+				referencesHeader: messages.referencesHeader,
+				createdAt: messages.createdAt,
+			})
 			.from(messages)
 			.where(and(scoped(messages), ...conditions))
 			.orderBy(desc(messages.createdAt))

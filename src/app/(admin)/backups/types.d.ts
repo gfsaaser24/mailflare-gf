@@ -31,3 +31,17 @@ export type BackupsResponse = {
 		missing: string[];
 	};
 };
+
+/** Per-organisation retention windows (T5.2), all in days. */
+export type RetentionSettings = {
+	trashDays: number;
+	sessionsDays: number;
+	webhookDeliveriesDays: number;
+	auditLogsDays: number;
+	autoReplyDays: number;
+	outboundJobsDays: number;
+};
+
+export type RetentionResponse = {
+	retention: RetentionSettings;
+};

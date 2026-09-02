@@ -1,5 +1,11 @@
 import { authFetch } from "@/lib/auth/client";
-import type { BackupItem, BackupsResponse, BackupSettings } from "./types";
+import type {
+	BackupItem,
+	BackupsResponse,
+	BackupSettings,
+	RetentionResponse,
+	RetentionSettings,
+} from "./types";
 
 export const WEEKDAYS = [
 	{ value: 0, label: "Sunday" },
@@ -85,4 +91,35 @@ export function getStatusClass(status: BackupItem["status"]): string {
 	if (status === "failed") return "border-red-200 bg-red-50 text-red-700";
 	if (status === "running") return "border-blue-200 bg-blue-50 text-blue-700";
 	return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+/** Fields of the retention card, in the order they are shown. */
+export const RETENTION_FIELDS: Array<{
+	key: keyof RetentionSettings;
+	label: string;
+	hint: string;
+}> = [
+	{ key: "trashDays", label: "Trash", hint: "Delete trashed messages, their attachments and raw files" },
+	{ key: "sessionsDays", label: "Sessions", hint: "Remove sign-in sessions this long after they expired" },
+	{ key: "webhookDeliveriesDays", label: "Webhook deliveries", hint: "Remove webhook delivery records" },
+	{ key: "auditLogsDays", label: "Audit logs", hint: "Platform operator actions are always kept" },
+	{ key: "autoReplyDays", label: "Auto-reply records", hint: "Remove the who-was-answered records" },
+	{ key: "outboundJobsDays", label: "Outbound jobs", hint: "Remove finished send jobs" },
+];
+
+export async function fetchRetention(): Promise<RetentionSettings> {
+	const response = await authFetch("/api/settings/retention");
+	const data = (await response.json()) as RetentionResponse & { error?: string };
+	if (!response.ok) throw new Error(data.error ?? "Failed to load retention settings");
+	return data.retention;
+}
+
+export async function saveRetention(retention: RetentionSettings): Promise<void> {
+	const response = await authFetch("/api/settings/retention", {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(retention),
+	});
+	const data = (await response.json()) as { error?: string };
+	if (!response.ok) throw new Error(data.error ?? "Failed to save retention settings");
 }

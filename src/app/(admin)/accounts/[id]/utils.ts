@@ -9,6 +9,8 @@ import type {
 	ManagedAccount,
 	ManagedDomain,
 	ManagedMailbox,
+	InviteActionResult,
+	TransferTarget,
 } from "./types";
 
 export const permissionLabels: Record<NonNullable<AccountMailboxAccessItem["permission"]>, string> = {
@@ -169,4 +171,31 @@ export async function removeManagedMailbox(mailboxId: string): Promise<void> {
 	const response = await authFetch(`/api/mailboxes/${mailboxId}`, { method: "DELETE" });
 	const data = (await response.json()) as { error?: string };
 	if (!response.ok) throw new Error(data.error ?? "Unable to remove mailbox");
+}
+
+/** T3.5: reissue the set-password invite. */
+export async function resendManagedAccountInvite(accountId: string): Promise<InviteActionResult> {
+	const response = await authFetch(`/api/accounts/${accountId}/invite`, { method: "POST" });
+	const data = (await response.json()) as InviteActionResult & { error?: string };
+	if (!response.ok) throw new Error(data.error ?? "Unable to send the invite");
+	return data;
+}
+
+/** T3.5: move everything this account owns to another account of the same org. */
+export async function transferManagedAccount(accountId: string, toUserId: string): Promise<void> {
+	const response = await authFetch(`/api/accounts/${accountId}/transfer`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ toUserId }),
+	});
+	const data = (await response.json()) as { error?: string };
+	if (!response.ok) throw new Error(data.error ?? "Unable to transfer ownership");
+}
+
+/** Every account of the caller's organisation, for the transfer target picker. */
+export async function fetchTransferTargets(accountId: string): Promise<TransferTarget[]> {
+	const response = await authFetch("/api/accounts");
+	const data = (await response.json()) as { accounts?: TransferTarget[]; error?: string };
+	if (!response.ok) throw new Error(data.error ?? "Unable to load accounts");
+	return (data.accounts ?? []).filter((account) => account.id !== accountId && !account.disabled);
 }

@@ -17,6 +17,7 @@ import type { AppDatabase } from "@/db";
 import { conversationNotes, conversations, messages, users } from "@/db/schema";
 import { getEmailAddress } from "@/lib/email/address";
 import { newId } from "@/lib/ids";
+import { emitWebhookEvent } from "@/lib/webhooks/dispatch";
 
 /** How far back a subject+participant match is still considered the same conversation. */
 export const SUBJECT_MATCH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -661,7 +662,19 @@ export async function assignConversation(
 		.set({ assignedUserId: userId })
 		.where(and(eq(conversations.id, conversationId), eq(conversations.organizationId, orgId)))
 		.returning();
-	return row ?? null;
+	if (!row) return null;
+	// T6.3: `conversation.assigned` also fires on unassign (`userId === null`).
+	await emitWebhookEvent(db, {
+		orgId,
+		type: "conversation.assigned",
+		data: {
+			conversationId: row.id,
+			assignedUserId: row.assignedUserId,
+			subject: row.subject,
+			status: row.status,
+		},
+	});
+	return row;
 }
 
 export type ConversationStatusUpdate = {
@@ -757,5 +770,16 @@ export async function addConversationNote(
 				.limit(1)
 				.then((found) => found[0] ?? null)
 		: null;
+	// T6.3.
+	await emitWebhookEvent(db, {
+		orgId: input.orgId,
+		type: "conversation.note",
+		data: {
+			conversationId: input.conversationId,
+			noteId: row.id,
+			body: row.body,
+			authorId: input.userId,
+		},
+	});
 	return { id: row.id, body: row.body, createdAt: row.createdAt, author };
 }

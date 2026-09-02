@@ -6,7 +6,6 @@
  * (`src/lib/platform/guard.ts`). Nothing in this file may be imported by a
  * tenant route.
  */
-import { randomBytes } from "node:crypto";
 import { and, asc, count, eq, gte, ilike, or, sql, sum } from "drizzle-orm";
 import type { AppDatabase } from "@/db";
 import {
@@ -18,6 +17,7 @@ import {
 	organizations,
 	users,
 } from "@/db/schema";
+import { createInvite, generateRandomPassword } from "@/lib/accounts/service";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
 import { newId } from "@/lib/ids";
@@ -166,22 +166,16 @@ export type CreateOrganizationResult = {
 	organization: { id: string; name: string; slug: string; status: "active" | "suspended" };
 	admin: { id: string; email: string; name: string };
 	/**
-	 * The generated password, returned **once**.
+	 * The set-password link for the new admin, returned **once** (T3.5).
 	 *
-	 * There is no password-reset or invite-token mechanism anywhere in the app
-	 * today (`src/lib/auth/*` and `/api/settings/password` only support changing a
-	 * password you already know), so there is nothing to mint a set-password token
-	 * against. T3.5 adds the invite flow; until then the operator hands this
-	 * password over out of band.
+	 * A brand-new organisation has no mailbox to send from, so the invite is not
+	 * emailed: the operator copies this link and hands it over. It works once and
+	 * expires after seven days. No password is ever shown — the account is created
+	 * with a random one that nobody is told.
 	 */
-	temporaryPassword: string;
+	inviteUrl: string;
 	quotaTemplate: QuotaTemplate | null;
 };
-
-/** A 32-character URL-safe random password. */
-function generatePassword(): string {
-	return randomBytes(24).toString("base64url");
-}
 
 export class SlugTakenError extends Error {
 	constructor() {
@@ -224,7 +218,8 @@ export async function createOrganizationWithAdmin(
 
 	const organizationId = newId("org");
 	const adminId = newId("usr");
-	const temporaryPassword = generatePassword();
+	// Placeholder only: the admin sets their real password through the invite.
+	const placeholderPassword = generateRandomPassword();
 
 	await db.insert(organizations).values({
 		id: organizationId,
@@ -237,7 +232,7 @@ export async function createOrganizationWithAdmin(
 		id: adminId,
 		organizationId,
 		email,
-		passwordHash: hashPassword(temporaryPassword),
+		passwordHash: hashPassword(placeholderPassword),
 		name: adminName,
 		role: "admin",
 		canManageMailboxes: true,
@@ -264,10 +259,16 @@ export async function createOrganizationWithAdmin(
 		}),
 	});
 
+	const invite = await createInvite(db, {
+		organizationId,
+		userId: adminId,
+		createdByUserId: operatorUserId,
+	});
+
 	return {
 		organization: { id: organizationId, name, slug, status: "active" },
 		admin: { id: adminId, email, name: adminName },
-		temporaryPassword,
+		inviteUrl: invite.url,
 		quotaTemplate: input.quotaTemplate ?? null,
 	};
 }

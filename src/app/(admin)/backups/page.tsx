@@ -26,17 +26,20 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import type { BackupItem, BackupSettings } from "./types";
+import type { BackupItem, BackupSettings, RetentionSettings } from "./types";
 import {
+  RETENTION_FIELDS,
   WEEKDAYS,
   downloadBackup,
   fetchBackups,
+  fetchRetention,
   formatBackupDate,
   formatBackupSize,
   getStatusClass,
   removeBackup,
   restoreBackup,
   saveBackupSettings,
+  saveRetention,
   startBackup,
 } from "./utils";
 
@@ -44,6 +47,7 @@ export default function BackupsPage() {
   const queryClient = useQueryClient();
   const restoreInput = useRef<HTMLInputElement | null>(null);
   const [settings, setSettings] = useState<BackupSettings | null>(null);
+  const [retention, setRetention] = useState<RetentionSettings | null>(null);
   const backups = useQuery({
     queryKey: ["backups"],
     queryFn: fetchBackups,
@@ -55,9 +59,18 @@ export default function BackupsPage() {
         : false,
   });
 
+  const retentionQuery = useQuery({
+    queryKey: ["retention"],
+    queryFn: fetchRetention,
+  });
+
   useEffect(() => {
     if (backups.data?.settings) setSettings(backups.data.settings);
   }, [backups.data?.settings]);
+
+  useEffect(() => {
+    if (retentionQuery.data) setRetention(retentionQuery.data);
+  }, [retentionQuery.data]);
 
   const saveSettings = useMutation({
     mutationFn: async () => {
@@ -65,6 +78,14 @@ export default function BackupsPage() {
       await saveBackupSettings(settings);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["backups"] }),
+  });
+
+  const saveRetentionSettings = useMutation({
+    mutationFn: async () => {
+      if (!retention) return;
+      await saveRetention(retention);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["retention"] }),
   });
 
   const runBackup = useMutation({
@@ -84,6 +105,8 @@ export default function BackupsPage() {
   });
   const error =
     backups.error ||
+    retentionQuery.error ||
+    saveRetentionSettings.error ||
     saveSettings.error ||
     runBackup.error ||
     deleteBackup.error ||
@@ -321,6 +344,56 @@ export default function BackupsPage() {
               >
                 <Save className="h-4 w-4" />
                 {saveSettings.isPending ? "Saving..." : "Save settings"}
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-3xl border-0 bg-white p-6">
+        <CardHeader className="py-0">
+          <CardTitle>Retention</CardTitle>
+          <CardDescription>
+            How long this organisation keeps things before the daily retention
+            job removes them. Deleting a trashed message also removes its raw
+            file and attachments and gives the storage back. Platform operator
+            audit entries are never removed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5 pt-5">
+          {retention && (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {RETENTION_FIELDS.map((field) => (
+                  <div key={field.key} className="space-y-2">
+                    <Label htmlFor={`retention-${field.key}`}>{field.label}</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id={`retention-${field.key}`}
+                        type="number"
+                        min={1}
+                        max={3650}
+                        value={retention[field.key]}
+                        onChange={(event) =>
+                          setRetention({
+                            ...retention,
+                            [field.key]: Number(event.target.value),
+                          })
+                        }
+                      />
+                      <span className="text-sm text-neutral-500">days</span>
+                    </div>
+                    <p className="text-xs text-neutral-500">{field.hint}</p>
+                  </div>
+                ))}
+              </div>
+
+              <Button
+                onClick={() => saveRetentionSettings.mutate()}
+                disabled={saveRetentionSettings.isPending}
+              >
+                <Save className="h-4 w-4" />
+                {saveRetentionSettings.isPending ? "Saving..." : "Save retention"}
               </Button>
             </>
           )}

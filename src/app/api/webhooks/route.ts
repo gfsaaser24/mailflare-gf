@@ -13,7 +13,14 @@ export const GET = withOrg(async ({ db, user, scoped }) => {
 		.from(webhooks)
 		.where(and(scoped(webhooks), eq(webhooks.userId, user.id)));
 	return NextResponse.json({
-		webhooks: rows.map((w) => ({ id: w.id, url: w.url, events: w.events, enabled: w.enabled })),
+		webhooks: rows.map((w) => ({
+			id: w.id,
+			url: w.url,
+			events: w.events,
+			description: w.description,
+			enabled: w.enabled,
+			createdAt: w.createdAt,
+		})),
 	});
 });
 
@@ -39,9 +46,18 @@ export const POST = withOrg(async ({ db, user, insertValues }, request) => {
 			url: parsed.data.url,
 			secret,
 			events: JSON.stringify(parsed.data.events),
+			description: parsed.data.description ?? null,
 			enabled: true,
 		}),
 	);
 
-	return NextResponse.json({ id, url: parsed.data.url, secret, events: parsed.data.events });
+	// The secret is returned exactly once, here.
+	return NextResponse.json({
+		id,
+		url: parsed.data.url,
+		secret,
+		events: parsed.data.events,
+		description: parsed.data.description ?? null,
+		enabled: true,
+	});
 });

@@ -8,6 +8,7 @@ const allowedBulkActions = new Set<BulkMessageAction>([
 	"unread",
 	"inbox",
 	"folder",
+	"delete",
 ]);
 
 export function isAllowedBulkMessageAction(action: unknown): action is BulkMessageAction {
