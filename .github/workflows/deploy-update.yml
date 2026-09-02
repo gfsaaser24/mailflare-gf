@@ -59,8 +59,10 @@ jobs:
       - name: Install dependencies
         run: npm install --no-package-lock
 
-      - name: Apply database migrations
-        run: npx wrangler d1 migrations apply DB --remote
+      - name: Deploy edge worker
+        run: |
+          npm --prefix cloudflare-worker install
+          npm run edge:deploy
 
       - name: Push update
         run: |
@@ -70,3 +72,4 @@ jobs:
             exit 0
           fi
           git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "App image is built by Coolify from this branch; trigger a redeploy there (see docs/deployment.md)."
