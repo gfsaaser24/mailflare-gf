@@ -1,5 +1,5 @@
 import { desc, eq, inArray } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
+import { alias } from "drizzle-orm/pg-core";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { auditLogs, domains, mailboxes, users } from "@/db/schema";

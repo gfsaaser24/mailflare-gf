@@ -59,7 +59,3 @@ Add your Cloudflare credentials to `.dev.vars`, then open [http://localhost:3000
 - [Deployment and configuration](docs/deployment.md)
 - [API and integrations](docs/api.md)
 - [Troubleshooting](docs/troubleshooting.md)
-
-## License
-
-See [LICENSE](LICENSE).

@@ -2,16 +2,15 @@ import type { NextConfig } from "next";
 import { getSecurityHeaders } from "./src/lib/security/headers";
 
 const nextConfig: NextConfig = {
+	output: "standalone",
 	turbopack: {
 		root: import.meta.dirname,
 	},
-  allowedDevOrigins: ['mail.dev'],
+	allowedDevOrigins: ["mail.dev"],
+	serverExternalPackages: ["postgres", "@aws-sdk/client-s3"],
 	typescript: {
-    // !! WARN !!
-    // Dangerously allow production builds to successfully complete
-    // even if your project has type errors.
-    ignoreBuildErrors: true,
-	  },
+		ignoreBuildErrors: true,
+	},
 	async headers() {
 		return [
 			{
@@ -23,8 +22,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
-// Enable calling `getCloudflareContext()` in `next dev`.
-// See https://opennext.js.org/cloudflare/bindings#local-access-to-bindings.
-import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
-initOpenNextCloudflareForDev();

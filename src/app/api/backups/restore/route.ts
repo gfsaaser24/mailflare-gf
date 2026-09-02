@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getDb } from "@/db";
 import { assertAdmin } from "@/lib/auth/admin";
 import { requireUser } from "@/lib/auth/cookies";
 import { restoreDatabaseRecords } from "@/lib/backups/export";
@@ -12,7 +13,7 @@ export async function POST(request: Request) {
 		const form = await request.formData();
 		const file = form.get("backup");
 		if (!(file instanceof File)) return NextResponse.json({ error: "Choose a backup file" }, { status: 400 });
-		await restoreDatabaseRecords(env.DB, await file.arrayBuffer());
+		await restoreDatabaseRecords(getDb(env), await file.arrayBuffer());
 		return NextResponse.json({ ok: true });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Failed to restore backup";

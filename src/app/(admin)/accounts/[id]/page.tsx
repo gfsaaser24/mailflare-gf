@@ -84,7 +84,7 @@ export default function AccountDetailsPage() {
 					<Label htmlFor="account-name">Name</Label>
 					<Input id="account-name" value={account.name} onChange={(event) => setAccount({ ...account, name: event.target.value })} />
 				</div>
-				{account.canForwardEmail && <div className="space-y-2">
+				<div className="space-y-2">
 					<Label htmlFor="forwarding-email">Forwarding email (optional)</Label>
 					<Input
 						id="forwarding-email"
@@ -96,7 +96,7 @@ export default function AccountDetailsPage() {
 					<p className="text-xs leading-5 text-neutral-500">
 						Incoming mail will also be sent to this verified Cloudflare Email Routing destination.
 					</p>
-				</div>}
+				</div>
 				<label className="flex items-center gap-3 text-sm">
 					<Checkbox checked={!account.disabled} onChange={(event) => setAccount({ ...account, disabled: !event.target.checked })} />
 					Account enabled

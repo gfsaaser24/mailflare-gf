@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { eq, desc, and, like, or, count, isNull, inArray, lte, gt } from "drizzle-orm";
+// ilike: SQLite's LIKE was case-insensitive; Postgres' LIKE is not.
+import { eq, desc, and, ilike as like, or, count, isNull, inArray, lte, gt } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { getEnv } from "@/lib/cloudflare";
 import { getCurrentUser } from "@/lib/auth/cookies";

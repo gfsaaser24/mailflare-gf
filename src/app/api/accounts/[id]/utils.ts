@@ -3,7 +3,8 @@ import type { getDb } from "@/db";
 import { mailboxes, users } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
 
-type Db = ReturnType<typeof getDb>;
+// Accepts the shared db or a transaction handle.
+type Db = Pick<ReturnType<typeof getDb>, "select" | "update" | "insert" | "delete">;
 
 export async function selectAccountById(db: Db, id: string) {
 	const [account] = await db.select().from(users).where(eq(users.id, id)).limit(1);

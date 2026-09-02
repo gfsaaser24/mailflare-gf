@@ -126,12 +126,3 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		throw err;
 	}
 }
-
-export type OutboundQueueMessage = SendEmailInput & { jobId?: string };
-
-export async function processOutboundQueue(
-	env: CloudflareEnv,
-	payload: OutboundQueueMessage,
-): Promise<void> {
-	await sendEmail(env, payload);
-}

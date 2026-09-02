@@ -1,0 +1,22 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "mailflare-edge",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-05-20",
+	"compatibility_flags": ["nodejs_compat"],
+	"keep_vars": true,
+	"observability": {
+		"enabled": true
+	},
+	// Public URL of the Mailflare app (the Node/Docker deployment). No trailing slash.
+	"vars": {
+		"APP_URL": "https://mail.easyserver.net"
+	},
+	// Outbound relay binding. This is the only Cloudflare resource the worker owns.
+	// Secret (set with `wrangler secret put EDGE_WORKER_SECRET`): EDGE_WORKER_SECRET
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	]
+}

@@ -1,17 +1,32 @@
-import { drizzle } from "drizzle-orm/d1";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import { schema } from "@/db/schema";
 
 export type AppDatabase = ReturnType<typeof createDb>;
 
-export function createDb(d1: D1Database) {
-	return drizzle(d1, { schema });
+export function createDb(connectionString: string) {
+	const client = postgres(connectionString, {
+		max: 10,
+		// Supabase pooler (transaction mode) does not support prepared statements.
+		prepare: false,
+	});
+	return drizzle(client, { schema });
 }
 
-export function getDb(env: Pick<CloudflareEnv, "DB">) {
-	if (!env.DB) {
-		throw new Error("No database binding configured");
+let singleton: AppDatabase | undefined;
+
+export function getSharedDb(): AppDatabase {
+	if (!singleton) {
+		const url = process.env.DATABASE_URL;
+		if (!url) throw new Error("DATABASE_URL is not set");
+		singleton = createDb(url);
 	}
-	return createDb(env.DB);
+	return singleton;
+}
+
+export function getDb(env: Pick<AppEnv, "DB">) {
+	if (!env.DB) throw new Error("No database configured");
+	return env.DB;
 }
 
 export { schema };

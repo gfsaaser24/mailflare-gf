@@ -17,7 +17,8 @@ import {
 	notifyUsersOfNewMessage,
 } from "@/lib/realtime/utils";
 
-export type InboundQueueMessage = {
+/** Raw inbound message metadata handed over by the edge worker relay. */
+export type InboundMessagePayload = {
 	from: string;
 	to: string;
 	rawR2Key: string;
@@ -26,7 +27,7 @@ export type InboundQueueMessage = {
 
 export async function processInboundMessage(
 	env: CloudflareEnv,
-	payload: InboundQueueMessage,
+	payload: InboundMessagePayload,
 ): Promise<void> {
 	const db = getDb(env);
 	const decision = await resolveInboundAddress(db, payload.to);
@@ -139,10 +140,10 @@ export async function storeRawToR2(
 	env: CloudflareEnv,
 	from: string,
 	to: string,
-	raw: ReadableStream<Uint8Array>,
+	raw: ArrayBuffer | ReadableStream<Uint8Array>,
 ): Promise<string> {
 	const key = `inbound/${Date.now()}-${newId()}.eml`;
-	const buffer = await new Response(raw).arrayBuffer();
+	const buffer = raw instanceof ArrayBuffer ? raw : await new Response(raw).arrayBuffer();
 	await env.BUCKET.put(key, buffer, {
 		httpMetadata: { contentType: "message/rfc822" },
 		customMetadata: { from, to },

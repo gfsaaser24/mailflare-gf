@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { domains, mailboxAccess, mailboxes } from "@/db/schema";
-import { isTeamMailboxSharingEnabled } from "@/lib/mailboxes/access-utils";
+import { getRealtimeEmitter } from "./emitter";
 import type { NewMessageNotification } from "./types";
 
 export function getSessionTokenFromRequest(request: Request): string | undefined {
@@ -31,7 +31,7 @@ export async function getMailboxNotificationUserIds(
 		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
 		.where(eq(mailboxes.id, mailboxId))
 		.limit(1);
-	const sharedUserIds = mailboxRows[0]?.type === "shared" && await isTeamMailboxSharingEnabled(db)
+	const sharedUserIds = mailboxRows[0]?.type === "shared"
 		? (await db
 			.select({ userId: mailboxAccess.userId })
 			.from(mailboxAccess)
@@ -49,18 +49,12 @@ export async function getMailboxNotificationUserIds(
 }
 
 export async function notifyUsersOfNewMessage(
-	env: CloudflareEnv,
+	_env: CloudflareEnv,
 	userIds: string[],
 	payload: NewMessageNotification,
 ): Promise<void> {
-	await Promise.allSettled(
-		userIds.map((userId) => {
-			const hub = env.REALTIME.getByName(userId);
-			return hub.fetch("https://mailflare-realtime/notify", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(payload),
-			});
-		}),
-	);
+	const emitter = getRealtimeEmitter();
+	for (const userId of userIds) {
+		emitter.publish(userId, payload);
+	}
 }

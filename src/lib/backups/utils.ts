@@ -1,23 +1,24 @@
-import type { BackupScheduleType, BackupWorkflowBinding, DatabaseBackupDocument, DatabaseRecord } from "./types";
+import type { BackupScheduleType, DatabaseBackupDocument, DatabaseRecord } from "./types";
+import { runBackup } from "./workflow";
 
 export const BACKUP_SETTINGS_ID = "default";
 export const BACKUP_PREFIX = "backups/database";
 
-export class BackupWorkflowUnavailableError extends Error {
-	constructor() {
-		super(
-			"Database backups are unavailable because the DATABASE_BACKUP_WORKFLOW binding is missing. Deploy the app with `npm run deploy` so Wrangler applies the workflow configuration.",
-		);
-		this.name = "BackupWorkflowUnavailableError";
-	}
-}
-
-export function getBackupWorkflowBinding(env: CloudflareEnv): BackupWorkflowBinding {
-	const workflow = env.DATABASE_BACKUP_WORKFLOW as BackupWorkflowBinding | undefined;
-	if (!workflow || typeof workflow.create !== "function") {
-		throw new BackupWorkflowUnavailableError();
-	}
-	return workflow;
+/**
+ * Kicks off a backup in the background and returns immediately; the caller
+ * (an API route) doesn't wait for the export/upload to finish. Errors are
+ * swallowed here because `runBackup` already records failures on the backup
+ * row itself — there's nothing left for an HTTP response to do with them.
+ *
+ * Note: this only runs backups that were explicitly requested (manual, or a
+ * scheduled one already marked due via `createScheduledBackupIfDue`). Actual
+ * cron-style scheduling of when to trigger a backup is handled outside the
+ * app by supascale's backup scheduler, not by any timer in this codebase.
+ */
+export function startBackup(env: AppEnv, backupId: string): void {
+	void runBackup(env, backupId).catch((error: unknown) => {
+		console.error(`Backup ${backupId} failed`, error);
+	});
 }
 
 export function isBackupDue(

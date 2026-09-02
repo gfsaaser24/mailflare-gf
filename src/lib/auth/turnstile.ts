@@ -1,3 +1,4 @@
+import { getClientIp } from "@/lib/http/ip";
 import { newId } from "@/lib/ids";
 
 type TurnstileResponse = {
@@ -23,7 +24,7 @@ export async function verifyTurnstileToken(
 			body: JSON.stringify({
 				secret,
 				response: token,
-				remoteip: request.headers.get("cf-connecting-ip") ?? undefined,
+				remoteip: getClientIp(request),
 				idempotency_key: newId("ts"),
 			}),
 		});

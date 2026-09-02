@@ -7,6 +7,8 @@ import { listImapFolders } from "@/lib/import/imap";
 import type { ImapFolderListRequest } from "./types";
 import { parseImapFolderListRequest } from "./utils";
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
 	const env = getEnv();
 	await requireUser(env, request);

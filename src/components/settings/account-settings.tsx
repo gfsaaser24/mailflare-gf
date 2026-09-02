@@ -72,17 +72,15 @@ export function AccountSettings() {
 				</CardContent>
 			</Card>
 
-			{user.canForwardEmail && (
-				<Card className="rounded-3xl border-0 bg-white px-6">
-					<CardHeader>
-						<CardTitle>Forwarding email</CardTitle>
-						<CardDescription>Send a copy of incoming messages to another email address.</CardDescription>
-					</CardHeader>
-					<CardContent className="pb-6">
-						<ForwardingEmailForm initialForwardingEmail={user.forwardingEmail ?? ""} />
-					</CardContent>
-				</Card>
-			)}
+			<Card className="rounded-3xl border-0 bg-white px-6">
+				<CardHeader>
+					<CardTitle>Forwarding email</CardTitle>
+					<CardDescription>Send a copy of incoming messages to another email address.</CardDescription>
+				</CardHeader>
+				<CardContent className="pb-6">
+					<ForwardingEmailForm initialForwardingEmail={user.forwardingEmail ?? ""} />
+				</CardContent>
+			</Card>
 
 			<Card className="rounded-3xl border-0 bg-white px-6">
 				<CardHeader>

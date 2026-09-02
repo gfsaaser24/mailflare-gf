@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getDb } from "@/db";
 import { hasAdminAccount } from "@/lib/auth/setup";
 import { getEnv } from "@/lib/cloudflare";
 import { getSetupRequirementChecks } from "@/lib/setup/configuration";
@@ -16,7 +17,7 @@ export async function POST() {
 	}
 
 	try {
-		const migrated = await migrateCleanDatabase(env.DB);
+		const migrated = await migrateCleanDatabase(getDb(env));
 		return NextResponse.json({ checks, migrated });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Database preparation failed";

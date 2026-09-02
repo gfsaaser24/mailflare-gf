@@ -1,21 +1,16 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { backups } from "@/db/schema";
-import { assertAdmin } from "@/lib/auth/admin";
-import { requireUser } from "@/lib/auth/cookies";
-import { getD1ExportConfigurationStatus } from "@/lib/backups/export";
+import { getExportConfigurationStatus } from "@/lib/backups/export";
 import {
 	createBackupRecord,
 	getBackupSettings,
 	listBackups,
 	updateBackupSettings,
 } from "@/lib/backups/service";
-import {
-	BackupWorkflowUnavailableError,
-	getBackupWorkflowBinding,
-} from "@/lib/backups/utils";
+import { startBackup } from "@/lib/backups/utils";
+import { reconcileStaleBackups } from "@/lib/backups/workflow";
 import { getEnv } from "@/lib/cloudflare";
+import { assertAdmin } from "@/lib/auth/admin";
+import { requireUser } from "@/lib/auth/cookies";
 import { parseBackupSettingsInput } from "./utils";
 
 async function requireAdmin(request: Request) {
@@ -28,6 +23,7 @@ async function requireAdmin(request: Request) {
 export async function GET(request: Request) {
 	try {
 		const { env } = await requireAdmin(request);
+		await reconcileStaleBackups(env);
 		const [settings, backupList] = await Promise.all([
 			getBackupSettings(env),
 			listBackups(env),
@@ -35,7 +31,7 @@ export async function GET(request: Request) {
 		return NextResponse.json({
 			settings,
 			backups: backupList,
-			configuration: getD1ExportConfigurationStatus(env),
+			configuration: getExportConfigurationStatus(env),
 		});
 	} catch {
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -57,25 +53,11 @@ export async function PUT(request: Request) {
 export async function POST(request: Request) {
 	try {
 		const { env, user } = await requireAdmin(request);
-		const workflow = getBackupWorkflowBinding(env);
 		const backupId = await createBackupRecord(env, "manual", user.id);
-		try {
-			await workflow.create({
-				id: `database-backup-${backupId}`,
-				params: { backupId, force: true },
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "Failed to start backup";
-			await getDb(env)
-				.update(backups)
-				.set({ status: "failed", error: message, completedAt: new Date() })
-				.where(eq(backups.id, backupId));
-			throw error;
-		}
+		startBackup(env, backupId);
 		return NextResponse.json({ backupId }, { status: 202 });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Failed to start backup";
-		const status = error instanceof BackupWorkflowUnavailableError ? 503 : 400;
-		return NextResponse.json({ error: message }, { status });
+		return NextResponse.json({ error: message }, { status: 400 });
 	}
 }
