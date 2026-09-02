@@ -40,7 +40,7 @@ Goal: turn mailflare-gf into an email control system for our own use. One platfo
 ### T1.1 Session token must not leave the cookie
 **Scope:** `src/app/api/auth/login/route.ts`, `src/app/api/auth/register/route.ts`, `src/lib/auth/client.ts`, `src/lib/auth/session.ts`, `src/lib/api/auth.ts`, any component that reads the token from the login response.
 **Problem:** login returns `token` in the JSON body (`login/route.ts:51`), the client stores it and sends `Authorization: Bearer` (`client.ts:41`), and the server accepts session tokens as bearers. The httpOnly cookie therefore protects nothing; any XSS reads the token.
-**Do:** Stop returning the token in the body. Client uses the cookie only (`credentials: "include"`). `Authorization: Bearer` is accepted **only** for API keys (prefix check: API keys start with the `mf_` prefix from `src/lib/api-keys.ts`; session tokens are rejected there). Keep `getSessionTokenFromRequest` cookie-only.
+**Do:** Stop returning the token in the body. Client uses the cookie only (`credentials: "include"`). `Authorization: Bearer` is accepted **only** for API keys (prefix check: API keys start with the `ep_` prefix (`KEY_PREFIX` in `src/lib/api-keys.ts`); session tokens are rejected there). Keep `getSessionTokenFromRequest` cookie-only.
 **Accept:** Test: login response body has no `token`; a request with `Authorization: Bearer <session token>` to `/api/auth/me` is 401; cookie auth still works end to end in the browser.
 
 ### T1.2 IMAP import SSRF: block hosts that *resolve* to private space
