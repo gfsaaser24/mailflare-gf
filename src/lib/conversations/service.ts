@@ -1,7 +1,20 @@
-import { and, desc, eq, gte, inArray, isNotNull, or, sql } from "drizzle-orm";
-import type { AnyColumn } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	gte,
+	ilike,
+	inArray,
+	isNotNull,
+	isNull,
+	or,
+	sql,
+} from "drizzle-orm";
+import type { AnyColumn, SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/db";
-import { conversations, messages } from "@/db/schema";
+import { conversationNotes, conversations, messages, users } from "@/db/schema";
 import { getEmailAddress } from "@/lib/email/address";
 import { newId } from "@/lib/ids";
 
@@ -331,4 +344,379 @@ async function findParentMessage(db: AppDatabase, input: ResolveOutboundInput) {
 		.orderBy(desc(messages.createdAt))
 		.limit(1);
 	return candidate ?? null;
+}
+
+/* ------------------------------------------------------------------ *
+ * T2.2 — read/write helpers behind the internal conversation API.
+ * ------------------------------------------------------------------ */
+
+export type ConversationStatus = ConversationRow["status"];
+
+/** Sort key for the conversation list: newest activity first, creation time as fallback. */
+const listSortKey = sql`coalesce(${conversations.lastMessageAt}, ${conversations.createdAt})`;
+
+export type ConversationCursor = { at: Date; id: string };
+
+/** Opaque page token: base64 of `<iso last_message_at>|<id>`. */
+export function encodeConversationCursor(at: Date, id: string): string {
+	return Buffer.from(`${at.toISOString()}|${id}`, "utf8").toString("base64url");
+}
+
+export function decodeConversationCursor(value: string | null | undefined): ConversationCursor | null {
+	if (!value) return null;
+	let decoded: string;
+	try {
+		decoded = Buffer.from(value, "base64url").toString("utf8");
+	} catch {
+		return null;
+	}
+	const separator = decoded.lastIndexOf("|");
+	if (separator <= 0) return null;
+	const at = new Date(decoded.slice(0, separator));
+	const id = decoded.slice(separator + 1);
+	if (Number.isNaN(at.getTime()) || !id) return null;
+	return { at, id };
+}
+
+export type ConversationListItem = {
+	id: string;
+	mailboxId: string;
+	subject: string | null;
+	status: ConversationStatus;
+	snoozedUntil: Date | null;
+	lastMessageAt: Date | null;
+	createdAt: Date;
+	messageCount: number;
+	unreadCount: number;
+	assignee: { id: string; name: string | null } | null;
+	lastMessage: {
+		id: string;
+		direction: "inbound" | "outbound";
+		from: string;
+		to: string;
+		snippet: string | null;
+		read: boolean;
+		createdAt: Date;
+	} | null;
+};
+
+export type ListConversationsInput = {
+	/** The mailboxes the caller may read. An empty list yields an empty page. */
+	mailboxIds: string[];
+	status?: ConversationStatus | null;
+	/** A user id, or `"none"` for unassigned conversations. */
+	assignedUserId?: string | null;
+	/** Case-insensitive substring match on the subject. */
+	q?: string | null;
+	cursor?: string | null;
+	limit?: number;
+};
+
+export const CONVERSATION_LIST_MAX_LIMIT = 100;
+export const CONVERSATION_LIST_DEFAULT_LIMIT = 50;
+
+export async function listConversations(
+	db: AppDatabase,
+	input: ListConversationsInput,
+): Promise<{ conversations: ConversationListItem[]; nextCursor: string | null; limit: number }> {
+	const limit = Math.min(
+		Math.max(input.limit ?? CONVERSATION_LIST_DEFAULT_LIMIT, 1),
+		CONVERSATION_LIST_MAX_LIMIT,
+	);
+	if (input.mailboxIds.length === 0) return { conversations: [], nextCursor: null, limit };
+
+	const conditions: SQL[] = [inArray(conversations.mailboxId, input.mailboxIds)];
+	if (input.status) conditions.push(eq(conversations.status, input.status));
+	if (input.assignedUserId === "none") {
+		conditions.push(isNull(conversations.assignedUserId));
+	} else if (input.assignedUserId) {
+		conditions.push(eq(conversations.assignedUserId, input.assignedUserId));
+	}
+	if (input.q) conditions.push(ilike(conversations.subject, `%${input.q}%`));
+	const cursor = decodeConversationCursor(input.cursor);
+	if (cursor) {
+		// Row-value comparison keeps the keyset stable when two rows share a timestamp.
+		conditions.push(
+			sql`(${listSortKey}, ${conversations.id}) < (${cursor.at.toISOString()}::timestamptz, ${cursor.id})`,
+		);
+	}
+
+	const rows = await db
+		.select({
+			id: conversations.id,
+			mailboxId: conversations.mailboxId,
+			subject: conversations.subject,
+			status: conversations.status,
+			snoozedUntil: conversations.snoozedUntil,
+			lastMessageAt: conversations.lastMessageAt,
+			createdAt: conversations.createdAt,
+			assignedUserId: conversations.assignedUserId,
+			assigneeName: users.name,
+		})
+		.from(conversations)
+		.leftJoin(users, eq(users.id, conversations.assignedUserId))
+		.where(and(...conditions))
+		.orderBy(sql`${listSortKey} desc`, desc(conversations.id))
+		.limit(limit + 1);
+
+	const page = rows.slice(0, limit);
+	const ids = page.map((row) => row.id);
+	const [lastMessages, counts] = await Promise.all([
+		lastMessageByConversation(db, ids),
+		messageCountsByConversation(db, ids),
+	]);
+
+	const items: ConversationListItem[] = page.map((row) => ({
+		id: row.id,
+		mailboxId: row.mailboxId,
+		subject: row.subject,
+		status: row.status,
+		snoozedUntil: row.snoozedUntil,
+		lastMessageAt: row.lastMessageAt,
+		createdAt: row.createdAt,
+		messageCount: counts.get(row.id)?.total ?? 0,
+		unreadCount: counts.get(row.id)?.unread ?? 0,
+		assignee: row.assignedUserId ? { id: row.assignedUserId, name: row.assigneeName ?? null } : null,
+		lastMessage: lastMessages.get(row.id) ?? null,
+	}));
+
+	const last = page.at(-1);
+	const nextCursor =
+		rows.length > limit && last
+			? encodeConversationCursor(last.lastMessageAt ?? last.createdAt, last.id)
+			: null;
+	return { conversations: items, nextCursor, limit };
+}
+
+async function lastMessageByConversation(db: AppDatabase, conversationIds: string[]) {
+	const map = new Map<string, NonNullable<ConversationListItem["lastMessage"]>>();
+	if (conversationIds.length === 0) return map;
+	const rows = await db
+		.selectDistinctOn([messages.conversationId], {
+			conversationId: messages.conversationId,
+			id: messages.id,
+			direction: messages.direction,
+			fromAddr: messages.fromAddr,
+			toAddr: messages.toAddr,
+			snippet: messages.snippet,
+			read: messages.read,
+			createdAt: messages.createdAt,
+		})
+		.from(messages)
+		.where(inArray(messages.conversationId, conversationIds))
+		.orderBy(messages.conversationId, desc(messages.createdAt), desc(messages.id));
+	for (const row of rows) {
+		if (!row.conversationId) continue;
+		map.set(row.conversationId, {
+			id: row.id,
+			direction: row.direction,
+			from: row.fromAddr,
+			to: row.toAddr,
+			snippet: row.snippet,
+			read: row.read,
+			createdAt: row.createdAt,
+		});
+	}
+	return map;
+}
+
+async function messageCountsByConversation(db: AppDatabase, conversationIds: string[]) {
+	const map = new Map<string, { total: number; unread: number }>();
+	if (conversationIds.length === 0) return map;
+	const rows = await db
+		.select({
+			conversationId: messages.conversationId,
+			total: count(),
+			unread: sql<number>`count(*) filter (where ${messages.read} = false)`.mapWith(Number),
+		})
+		.from(messages)
+		.where(inArray(messages.conversationId, conversationIds))
+		.groupBy(messages.conversationId);
+	for (const row of rows) {
+		if (!row.conversationId) continue;
+		map.set(row.conversationId, { total: Number(row.total), unread: Number(row.unread) });
+	}
+	return map;
+}
+
+export type ConversationMessage = {
+	id: string;
+	direction: "inbound" | "outbound";
+	from: string;
+	to: string;
+	subject: string | null;
+	snippet: string | null;
+	read: boolean;
+	createdAt: Date;
+};
+
+export type ConversationNote = {
+	id: string;
+	body: string;
+	createdAt: Date;
+	author: { id: string; name: string | null } | null;
+};
+
+export type ConversationDetail = Omit<ConversationListItem, "lastMessage"> & {
+	messages: ConversationMessage[];
+	notes: ConversationNote[];
+};
+
+/** The conversation plus its messages (oldest first) and its notes. */
+export async function getConversationWithMessages(
+	db: AppDatabase,
+	conversationId: string,
+): Promise<ConversationDetail | null> {
+	const [row] = await db
+		.select({
+			id: conversations.id,
+			mailboxId: conversations.mailboxId,
+			subject: conversations.subject,
+			status: conversations.status,
+			snoozedUntil: conversations.snoozedUntil,
+			lastMessageAt: conversations.lastMessageAt,
+			createdAt: conversations.createdAt,
+			assignedUserId: conversations.assignedUserId,
+			assigneeName: users.name,
+		})
+		.from(conversations)
+		.leftJoin(users, eq(users.id, conversations.assignedUserId))
+		.where(eq(conversations.id, conversationId))
+		.limit(1);
+	if (!row) return null;
+
+	const [messageRows, notes] = await Promise.all([
+		db
+			.select({
+				id: messages.id,
+				direction: messages.direction,
+				fromAddr: messages.fromAddr,
+				toAddr: messages.toAddr,
+				subject: messages.subject,
+				snippet: messages.snippet,
+				read: messages.read,
+				createdAt: messages.createdAt,
+			})
+			.from(messages)
+			.where(eq(messages.conversationId, conversationId))
+			.orderBy(asc(messages.createdAt), asc(messages.id)),
+		listConversationNotes(db, conversationId),
+	]);
+
+	return {
+		id: row.id,
+		mailboxId: row.mailboxId,
+		subject: row.subject,
+		status: row.status,
+		snoozedUntil: row.snoozedUntil,
+		lastMessageAt: row.lastMessageAt,
+		createdAt: row.createdAt,
+		messageCount: messageRows.length,
+		unreadCount: messageRows.filter((message) => !message.read).length,
+		assignee: row.assignedUserId ? { id: row.assignedUserId, name: row.assigneeName ?? null } : null,
+		messages: messageRows.map((message) => ({
+			id: message.id,
+			direction: message.direction,
+			from: message.fromAddr,
+			to: message.toAddr,
+			subject: message.subject,
+			snippet: message.snippet,
+			read: message.read,
+			createdAt: message.createdAt,
+		})),
+		notes,
+	};
+}
+
+/** Sets or clears the assignee. Returns the updated row, or null if it vanished. */
+export async function assignConversation(
+	db: AppDatabase,
+	conversationId: string,
+	userId: string | null,
+): Promise<ConversationRow | null> {
+	const [row] = await db
+		.update(conversations)
+		.set({ assignedUserId: userId })
+		.where(eq(conversations.id, conversationId))
+		.returning();
+	return row ?? null;
+}
+
+export type ConversationStatusUpdate = {
+	status?: ConversationStatus;
+	/** `null` clears the snooze; a date implies `status: "snoozed"` unless one is given. */
+	snoozedUntil?: Date | null;
+};
+
+export async function updateConversationStatus(
+	db: AppDatabase,
+	conversationId: string,
+	update: ConversationStatusUpdate,
+): Promise<ConversationRow | null> {
+	const values: Partial<typeof conversations.$inferInsert> = {};
+	if (update.status !== undefined) values.status = update.status;
+	if (update.snoozedUntil !== undefined) {
+		values.snoozedUntil = update.snoozedUntil;
+		if (update.status === undefined) values.status = update.snoozedUntil ? "snoozed" : "open";
+	}
+	// Leaving "snoozed" without saying so drops the wake-up time with it.
+	if (update.status && update.status !== "snoozed" && update.snoozedUntil === undefined) {
+		values.snoozedUntil = null;
+	}
+	if (Object.keys(values).length === 0) return getConversation(db, conversationId);
+
+	const [row] = await db
+		.update(conversations)
+		.set(values)
+		.where(eq(conversations.id, conversationId))
+		.returning();
+	return row ?? null;
+}
+
+export async function listConversationNotes(
+	db: AppDatabase,
+	conversationId: string,
+): Promise<ConversationNote[]> {
+	const rows = await db
+		.select({
+			id: conversationNotes.id,
+			body: conversationNotes.body,
+			createdAt: conversationNotes.createdAt,
+			userId: conversationNotes.userId,
+			authorName: users.name,
+		})
+		.from(conversationNotes)
+		.leftJoin(users, eq(users.id, conversationNotes.userId))
+		.where(eq(conversationNotes.conversationId, conversationId))
+		.orderBy(asc(conversationNotes.createdAt), asc(conversationNotes.id));
+	return rows.map((row) => ({
+		id: row.id,
+		body: row.body,
+		createdAt: row.createdAt,
+		author: row.userId ? { id: row.userId, name: row.authorName ?? null } : null,
+	}));
+}
+
+export async function addConversationNote(
+	db: AppDatabase,
+	input: { conversationId: string; userId: string | null; body: string },
+): Promise<ConversationNote> {
+	const [row] = await db
+		.insert(conversationNotes)
+		.values({
+			id: newId("cnote"),
+			conversationId: input.conversationId,
+			userId: input.userId,
+			body: input.body,
+		})
+		.returning();
+	const author = input.userId
+		? await db
+				.select({ id: users.id, name: users.name })
+				.from(users)
+				.where(eq(users.id, input.userId))
+				.limit(1)
+				.then((found) => found[0] ?? null)
+		: null;
+	return { id: row.id, body: row.body, createdAt: row.createdAt, author };
 }

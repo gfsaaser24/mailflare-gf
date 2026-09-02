@@ -3,10 +3,13 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { createDb as createAppDb, type AppDatabase } from "@/db";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 /** Drizzle's bookkeeping table; never truncate it. */
 const MIGRATIONS_TABLE = "__drizzle_migrations";
 const MIGRATIONS_FOLDER = "drizzle/migrations";
+/** Preserved across truncations: holds the migration-seeded default org. */
+const ORGANIZATIONS_TABLE = "organizations";
 
 export function getTestDatabaseUrl(): string | undefined {
 	const url = process.env.TEST_DATABASE_URL;
@@ -63,17 +66,29 @@ export function migrateTestDatabase(): Promise<void> {
 	return migrated;
 }
 
-/** Empties every public table (except drizzle's) and resets identity sequences. */
+/**
+ * Empties every public table (except drizzle's and `organizations`) and resets
+ * identity sequences.
+ *
+ * `organizations` is kept because every tenant table has a NOT NULL
+ * `organization_id` defaulting to the migration-seeded default org; wiping it
+ * would break every insert. Orgs a test created are removed instead.
+ */
 export async function truncateAll(): Promise<void> {
 	await migrateTestDatabase();
 	const database = createDb();
 	const rows = (await database.execute(
 		sql`SELECT quote_ident(tablename) AS name FROM pg_tables
-		    WHERE schemaname = 'public' AND tablename <> ${MIGRATIONS_TABLE}`,
+		    WHERE schemaname = 'public'
+		      AND tablename <> ${MIGRATIONS_TABLE}
+		      AND tablename <> ${ORGANIZATIONS_TABLE}`,
 	)) as unknown as Array<{ name: string }>;
 	if (rows.length === 0) return;
 	const list = rows.map((r) => `public.${r.name}`).join(", ");
 	await database.execute(sql.raw(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`));
+	await database.execute(
+		sql`DELETE FROM "organizations" WHERE "id" <> ${DEFAULT_ORGANIZATION_ID}`,
+	);
 }
 
 /** Closes the pool so vitest can exit cleanly. */

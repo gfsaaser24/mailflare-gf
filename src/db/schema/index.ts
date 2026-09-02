@@ -1,9 +1,31 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, integer, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { DEFAULT_ORGANIZATION_ID } from "../../lib/organizations/constants";
+
+export const organizations = pgTable(
+	"organizations",
+	{
+		id: text("id").primaryKey(),
+		name: text("name").notNull(),
+		slug: text("slug").notNull(),
+		status: text("status", { enum: ["active", "suspended"] })
+			.notNull()
+			.default("active"),
+		notes: text("notes"),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+			.notNull()
+			.$defaultFn(() => new Date()),
+	},
+	(t) => [uniqueIndex("organizations_slug_idx").on(t.slug)],
+);
 
 export const users = pgTable("users", {
 	id: text("id").primaryKey(),
+	organizationId: text("organization_id")
+		.notNull()
+		.default(DEFAULT_ORGANIZATION_ID)
+		.references(() => organizations.id),
 	email: text("email").notNull().unique(),
 	resetEmail: text("reset_email"),
 	forwardingEmail: text("forwarding_email"),
@@ -17,12 +39,16 @@ export const users = pgTable("users", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
-});
+}, (t) => [index("users_organization_idx").on(t.organizationId)]);
 
 export const domains = pgTable(
 	"domains",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		userId: text("user_id")
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
@@ -42,6 +68,7 @@ export const domains = pgTable(
 	(t) => [
 		uniqueIndex("domains_hostname_idx").on(t.hostname),
 		index("domains_user_idx").on(t.userId),
+		index("domains_organization_idx").on(t.organizationId),
 	],
 );
 
@@ -49,6 +76,10 @@ export const mailboxes = pgTable(
 	"mailboxes",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		userId: text("user_id")
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
@@ -69,7 +100,10 @@ export const mailboxes = pgTable(
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
-	(t) => [uniqueIndex("mailboxes_address_idx").on(t.domainId, t.localPart)],
+	(t) => [
+		uniqueIndex("mailboxes_address_idx").on(t.domainId, t.localPart),
+		index("mailboxes_organization_domain_idx").on(t.organizationId, t.domainId),
+	],
 );
 
 export const autoReplyDeliveries = pgTable(
@@ -117,6 +151,10 @@ export const contacts = pgTable(
 	"contacts",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		userId: text("user_id")
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
@@ -141,6 +179,10 @@ export const folders = pgTable(
 	"folders",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		userId: text("user_id")
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
@@ -162,6 +204,10 @@ export const folders = pgTable(
 
 export const apiKeys = pgTable("api_keys", {
 	id: text("id").primaryKey(),
+	organizationId: text("organization_id")
+		.notNull()
+		.default(DEFAULT_ORGANIZATION_ID)
+		.references(() => organizations.id),
 	userId: text("user_id")
 		.notNull()
 		.references(() => users.id, { onDelete: "cascade" }),
@@ -173,12 +219,16 @@ export const apiKeys = pgTable("api_keys", {
 		.notNull()
 		.$defaultFn(() => new Date()),
 	lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
-});
+}, (t) => [index("api_keys_organization_idx").on(t.organizationId)]);
 
 export const conversations = pgTable(
 	"conversations",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		mailboxId: text("mailbox_id")
 			.notNull()
 			.references(() => mailboxes.id, { onDelete: "cascade" }),
@@ -199,6 +249,7 @@ export const conversations = pgTable(
 	(t) => [
 		index("conversations_mailbox_last_message_idx").on(t.mailboxId, t.lastMessageAt.desc()),
 		index("conversations_mailbox_subject_idx").on(t.mailboxId, t.subjectNormalized),
+		index("conversations_organization_last_message_idx").on(t.organizationId, t.lastMessageAt),
 	],
 );
 
@@ -222,6 +273,10 @@ export const messages = pgTable(
 	"messages",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		userId: text("user_id")
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
@@ -251,6 +306,7 @@ export const messages = pgTable(
 	},
 	(t) => [
 		index("messages_user_created_idx").on(t.userId, t.createdAt),
+		index("messages_organization_mailbox_created_idx").on(t.organizationId, t.mailboxId, t.createdAt),
 		index("messages_conversation_idx").on(t.conversationId, t.createdAt),
 		index("messages_mailbox_idx").on(t.mailboxId),
 		index("messages_folder_idx").on(t.folderId),
@@ -305,6 +361,10 @@ export const emailTemplates = pgTable(
 	"email_templates",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
 		name: text("name").notNull(),
 		subject: text("subject").notNull().default(""),
@@ -319,6 +379,10 @@ export const calendarEvents = pgTable(
 	"calendar_events",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
 		mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
 		title: text("title").notNull(),
@@ -335,6 +399,10 @@ export const calendarEvents = pgTable(
 
 export const routingRules = pgTable("routing_rules", {
 	id: text("id").primaryKey(),
+	organizationId: text("organization_id")
+		.notNull()
+		.default(DEFAULT_ORGANIZATION_ID)
+		.references(() => organizations.id),
 	userId: text("user_id")
 		.notNull()
 		.references(() => users.id, { onDelete: "cascade" }),
@@ -357,6 +425,10 @@ export const routingRules = pgTable("routing_rules", {
 
 export const webhooks = pgTable("webhooks", {
 	id: text("id").primaryKey(),
+	organizationId: text("organization_id")
+		.notNull()
+		.default(DEFAULT_ORGANIZATION_ID)
+		.references(() => organizations.id),
 	userId: text("user_id")
 		.notNull()
 		.references(() => users.id, { onDelete: "cascade" }),
@@ -367,7 +439,7 @@ export const webhooks = pgTable("webhooks", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
-});
+}, (t) => [index("webhooks_organization_idx").on(t.organizationId)]);
 
 export const webhookDeliveries = pgTable("webhook_deliveries", {
 	id: text("id").primaryKey(),
@@ -399,6 +471,10 @@ export const auditLogs = pgTable(
 	"audit_logs",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		actorUserId: text("actor_user_id").references(() => users.id, { onDelete: "set null" }),
 		targetUserId: text("target_user_id").references(() => users.id, { onDelete: "set null" }),
 		mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
@@ -468,6 +544,10 @@ export const inboundFailures = pgTable(
 	"inbound_failures",
 	{
 		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.default(DEFAULT_ORGANIZATION_ID)
+			.references(() => organizations.id),
 		rawR2Key: text("raw_r2_key").notNull().unique(),
 		mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
 		fromAddr: text("from_addr").notNull(),
@@ -487,6 +567,7 @@ export const inboundFailures = pgTable(
 );
 
 export const schema = {
+	organizations,
 	users,
 	domains,
 	mailboxes,

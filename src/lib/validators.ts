@@ -181,3 +181,40 @@ export const webhookSchema = z.object({
 		.min(1)
 		.max(3),
 });
+
+/* T2.2 — conversation API (internal). */
+
+export const conversationStatusSchema = z.enum(["open", "closed", "snoozed"]);
+
+/** Query string for `GET /api/conversations`. */
+export const conversationListQuerySchema = z.object({
+	mailboxId: z.string().min(1).max(200).optional(),
+	status: conversationStatusSchema.optional(),
+	/** A user id, or `"none"` for unassigned. */
+	assignedUserId: z.string().min(1).max(200).optional(),
+	q: z.string().trim().min(1).max(200).optional(),
+	cursor: z.string().min(1).max(500).optional(),
+	limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+/** Body for `PATCH /api/conversations/[id]`. */
+export const updateConversationSchema = z
+	.object({
+		status: conversationStatusSchema.optional(),
+		snoozedUntil: z
+			.union([z.string().datetime({ offset: true }), z.string().datetime(), z.null()])
+			.optional(),
+	})
+	.refine((value) => value.status !== undefined || value.snoozedUntil !== undefined, {
+		message: "Nothing to update",
+	});
+
+/** Body for `POST /api/conversations/[id]/assign`; `null` unassigns. */
+export const assignConversationSchema = z.object({
+	userId: z.string().min(1).max(200).nullable(),
+});
+
+/** Body for `POST /api/conversations/[id]/notes`. */
+export const conversationNoteSchema = z.object({
+	body: z.string().trim().min(1).max(10_000),
+});
