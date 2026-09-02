@@ -9,6 +9,7 @@ import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { newId } from "@/lib/ids";
 import { firstRunRegisterSchema } from "@/lib/validators";
 import { attachOrProvisionDomainForUser } from "@/lib/domains/service";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 import { ensureEmailRoutingRuleToWorker } from "@/lib/cloudflare-api";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
 import { readJsonBody } from "@/lib/http/request";
@@ -61,7 +62,9 @@ export async function POST(request: Request) {
 	try {
 		// Setup (`POST /api/setup/domain`) already provisioned this hostname on
 		// Cloudflare. Reuse that work: attach the row, never provision twice.
-		const domain = await attachOrProvisionDomainForUser(env, userId, domainName, {
+		// First run: no organisation context exists yet, so the row lands in the
+		// default organisation, exactly where the column default already put it.
+		const domain = await attachOrProvisionDomainForUser(env, DEFAULT_ORGANIZATION_ID, userId, domainName, {
 			enableRouting: true,
 			enableSending: true,
 		});

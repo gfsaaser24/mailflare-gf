@@ -12,6 +12,8 @@ import type { ImportMailboxResult, ImportMessageInput } from "./types";
 export async function importMessagesToMailbox(
 	env: CloudflareEnv,
 	input: {
+		/** Organisation the imported rows belong to (`ctx.orgId`). */
+		organizationId: string;
 		userId: string;
 		mailboxId: string;
 		destination: ImportDestination;
@@ -22,6 +24,7 @@ export async function importMessagesToMailbox(
 	for (const message of input.messages) {
 		try {
 			const imported = await importMessageToMailbox(env, {
+				organizationId: input.organizationId,
 				userId: input.userId,
 				mailboxId: input.mailboxId,
 				destination: input.destination,
@@ -44,6 +47,7 @@ export async function importMessagesToMailbox(
 async function importMessageToMailbox(
 	env: CloudflareEnv,
 	input: {
+		organizationId: string;
 		userId: string;
 		mailboxId: string;
 		destination: ImportDestination;
@@ -58,7 +62,13 @@ async function importMessageToMailbox(
 	const [existing] = await db
 		.select({ id: messages.id })
 		.from(messages)
-		.where(and(eq(messages.mailboxId, input.mailboxId), eq(messages.providerMessageId, providerMessageId)))
+		.where(
+			and(
+				eq(messages.organizationId, input.organizationId),
+				eq(messages.mailboxId, input.mailboxId),
+				eq(messages.providerMessageId, providerMessageId),
+			),
+		)
 		.limit(1);
 	if (existing) return false;
 
@@ -70,6 +80,7 @@ async function importMessageToMailbox(
 
 	await db.insert(messages).values({
 		id: messageId,
+		organizationId: input.organizationId,
 		userId: input.userId,
 		mailboxId: input.mailboxId,
 		folderId: placement.folderId,
@@ -91,12 +102,15 @@ async function importMessageToMailbox(
 		await storeMessageAttachments(env, messageId, parsed.attachments, { validate: false });
 		const contactAddress = placement.direction === "outbound" ? toAddr : fromAddr;
 		await upsertContactFromAddress(env, {
+			organizationId: input.organizationId,
 			userId: input.userId,
 			address: contactAddress,
 			source: placement.direction === "outbound" ? "outbound" : "inbound",
 		});
 	} catch (error) {
-		await db.delete(messages).where(eq(messages.id, messageId));
+		await db
+			.delete(messages)
+			.where(and(eq(messages.organizationId, input.organizationId), eq(messages.id, messageId)));
 		throw error;
 	}
 

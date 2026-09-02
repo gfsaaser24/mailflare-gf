@@ -1,6 +1,3 @@
-import { NextResponse } from "next/server";
-import { assertAdmin } from "@/lib/auth/admin";
-import { requireUser } from "@/lib/auth/cookies";
 import { getEnv } from "@/lib/cloudflare";
 import type {
   GitHubContentResponse,
@@ -16,29 +13,6 @@ const GITHUB_API_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2026-03-10";
 const UPDATE_WORKFLOW = "deploy-update.yml";
 const UPDATE_SOURCE_REPOSITORY = "hieunc229/mailflare";
-
-export async function authorizeAdminRequest(request: Request) {
-  const env = getEnv();
-  let user: Awaited<ReturnType<typeof requireUser>>;
-
-  try {
-    user = await requireUser(env, request);
-  } catch {
-    return {
-      error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
-
-  try {
-    assertAdmin(user);
-  } catch {
-    return {
-      error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-    };
-  }
-
-  return { env };
-}
 
 function getDispatchConfig(env: CloudflareEnv): UpdateDispatchConfig {
   const token = env.GITHUB_UPDATE_TOKEN?.trim();

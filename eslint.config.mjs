@@ -24,7 +24,7 @@ const eslintConfig = [
 		rules: {
 			// TODO(T3.2): flip to "error" once every route folder has been converted
 			// to withOrg(); it is a warning while the migration is in flight.
-			"mailflare/require-org-scope": "warn",
+			"mailflare/require-org-scope": "error",
 		},
 	},
 ];

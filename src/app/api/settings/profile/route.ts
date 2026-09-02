@@ -1,16 +1,12 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
 import { ZodError } from "zod";
-import { getEnv } from "@/lib/cloudflare";
-import { getDb } from "@/db";
 import { users } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
+import { withOrg } from "@/lib/api/with-org";
 import type { UpdateProfileInput } from "./types";
 import { parseUpdateProfileRequest } from "./utils";
 
-export async function PATCH(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const PATCH = withOrg(async ({ db, user, scoped }, request) => {
 	let parsed: UpdateProfileInput;
 	try {
 		parsed = await parseUpdateProfileRequest(request);
@@ -21,8 +17,8 @@ export async function PATCH(request: Request) {
 		return NextResponse.json({ error: "Invalid request" }, { status: 400 });
 	}
 
-	const db = getDb(env);
-	const forwardingEmail = parsed.forwardingEmail === undefined ? user.forwardingEmail : parsed.forwardingEmail;
+	const forwardingEmail =
+		parsed.forwardingEmail === undefined ? user.forwardingEmail : parsed.forwardingEmail;
 	await db
 		.update(users)
 		.set({
@@ -30,7 +26,7 @@ export async function PATCH(request: Request) {
 			resetEmail: parsed.resetEmail,
 			forwardingEmail,
 		})
-		.where(eq(users.id, user.id));
+		.where(and(scoped(users), eq(users.id, user.id)));
 
 	return NextResponse.json({
 		user: {
@@ -42,4 +38,4 @@ export async function PATCH(request: Request) {
 			canForwardEmail: true,
 		},
 	});
-}
+});

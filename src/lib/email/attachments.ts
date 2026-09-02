@@ -130,18 +130,30 @@ export async function listMessageAttachments(
 	}));
 }
 
+/**
+ * One attachment plus its stored object, or null when the caller may not have it.
+ *
+ * `orgId` is the caller's organisation (`ctx.orgId` from `withOrg`): the parent
+ * message must belong to it, so an attachment in another organisation is
+ * indistinguishable from one that does not exist.
+ */
 export async function getAttachmentForUser(
 	env: CloudflareEnv,
 	user: SessionUser,
 	messageId: string,
 	attachmentId: string,
+	orgId: string,
 ) {
 	const db = getDb(env);
-	const [message] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.organizationId, orgId)))
+		.limit(1);
 	if (!message) return null;
 
 	if (message.mailboxId) {
-		const access = await getMailboxAccessLevel(db, user, message.mailboxId);
+		const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
 		if (!access?.canRead) return null;
 	} else if (message.userId !== user.id) {
 		return null;

@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { getEnv } from "@/lib/cloudflare";
-import { getDb } from "@/db";
+import { and, eq } from "drizzle-orm";
 import { messages } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
+import { withOrg } from "@/lib/api/with-org";
 import { buildSnippet } from "@/lib/email/parse";
 import type { DraftPayload, DraftRouteParams } from "./types";
 import { selectDraftWithBody } from "./utils";
@@ -11,24 +9,20 @@ import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { getDraftSender, userOwnsDraft } from "../utils";
 
-export async function GET(request: Request, { params }: DraftRouteParams) {
+export const GET = withOrg(async (ctx, _request, { params }: DraftRouteParams) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await requireUser(env, request);
-	const db = getDb(env);
-	const draft = await selectDraftWithBody(db, user.id, id);
+	const draft = await selectDraftWithBody(ctx, ctx.user.id, id);
 
 	if (!draft) {
 		return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 	}
 
 	return NextResponse.json({ draft });
-}
+});
 
-export async function PATCH(request: Request, { params }: DraftRouteParams) {
+export const PATCH = withOrg(async (ctx, request, { params }: DraftRouteParams) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await requireUser(env, request);
+	const { env, db, user, scoped } = ctx;
 	let input: DraftPayload;
 	try {
 		input = await readJsonBody<DraftPayload>(request, 1024 * 1024);
@@ -36,8 +30,11 @@ export async function PATCH(request: Request, { params }: DraftRouteParams) {
 		const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
 		return NextResponse.json({ error: "Invalid draft request" }, { status });
 	}
-	const db = getDb(env);
-	const [draft] = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+	const [draft] = await db
+		.select()
+		.from(messages)
+		.where(and(scoped(messages), eq(messages.id, id)))
+		.limit(1);
 
 	if (!userOwnsDraft(draft, user.id)) {
 		return NextResponse.json({ error: "Draft not found" }, { status: 404 });
@@ -60,22 +57,23 @@ export async function PATCH(request: Request, { params }: DraftRouteParams) {
 			textBody: text || null,
 			htmlBody: html || null,
 		})
-		.where(eq(messages.id, id));
+		.where(and(scoped(messages), eq(messages.id, id)));
 
 	return NextResponse.json({ draft: { id } });
-}
+});
 
-export async function DELETE(request: Request, { params }: DraftRouteParams) {
+export const DELETE = withOrg(async ({ db, user, scoped }, _request, { params }: DraftRouteParams) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await requireUser(env, request);
-	const db = getDb(env);
-	const [draft] = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+	const [draft] = await db
+		.select()
+		.from(messages)
+		.where(and(scoped(messages), eq(messages.id, id)))
+		.limit(1);
 
 	if (!userOwnsDraft(draft, user.id)) {
 		return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 	}
 
-	await db.delete(messages).where(eq(messages.id, id));
+	await db.delete(messages).where(and(scoped(messages), eq(messages.id, id)));
 	return NextResponse.json({ ok: true });
-}
+});

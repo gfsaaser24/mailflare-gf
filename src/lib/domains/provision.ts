@@ -1,7 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { domains } from "@/db/schema";
 import { newId } from "@/lib/ids";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 import {
 	createSendingSubdomain,
 	deleteSendingSubdomain,
@@ -40,6 +41,12 @@ export type ProvisionDomainOptions = {
 	hostname: string;
 	/** When given, a `domains` row is inserted/updated for this owner. */
 	userId?: string;
+	/**
+	 * Organisation the row belongs to. Pass `ctx.orgId`; the DB step filters and
+	 * stamps on it. Left optional for the pre-organisation setup flow
+	 * (`POST /api/setup/domain`), which falls back to the default organisation.
+	 */
+	organizationId?: string;
 	enableRouting?: boolean;
 	enableSending?: boolean;
 };
@@ -188,21 +195,28 @@ export async function provisionDomain(
 	let domain: DomainRow | null = null;
 	if (options.userId) {
 		const userId = options.userId;
+		const organizationId = options.organizationId ?? DEFAULT_ORGANIZATION_ID;
 		try {
 			const db = getDb(env);
 			domain = await db.transaction(async (tx) => {
+				// `hostname` is globally unique, so the lookup stays unscoped; the row
+				// is then rejected unless it belongs to this organisation and owner.
 				const [existing] = await tx
 					.select()
 					.from(domains)
 					.where(eq(domains.hostname, hostname))
 					.limit(1);
-				if (existing && existing.userId !== userId) {
+				if (
+					existing &&
+					(existing.userId !== userId || existing.organizationId !== organizationId)
+				) {
 					throw new Error("Domain is already registered");
 				}
 
 				const mergedRouting = routingEnabled || (existing?.routingEnabled ?? false);
 				const mergedSending = sendingEnabled || (existing?.sendingEnabled ?? false);
 				const values = {
+					organizationId,
 					userId,
 					hostname,
 					zoneId,
@@ -214,8 +228,15 @@ export async function provisionDomain(
 				};
 
 				if (existing) {
-					await tx.update(domains).set(values).where(eq(domains.id, existing.id));
-					const [updated] = await tx.select().from(domains).where(eq(domains.id, existing.id)).limit(1);
+					await tx
+						.update(domains)
+						.set(values)
+						.where(and(eq(domains.organizationId, organizationId), eq(domains.id, existing.id)));
+					const [updated] = await tx
+						.select()
+						.from(domains)
+						.where(and(eq(domains.organizationId, organizationId), eq(domains.id, existing.id)))
+						.limit(1);
 					return updated!;
 				}
 

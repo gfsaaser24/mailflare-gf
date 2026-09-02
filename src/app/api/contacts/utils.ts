@@ -1,39 +1,44 @@
 import { and, eq } from "drizzle-orm";
-import type { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import type { OrgContext } from "@/lib/api/with-org";
 import { getContactId } from "@/lib/contacts/utils";
 
-type Db = ReturnType<typeof getDb>;
-
-export async function getContactByEmail(db: Db, userId: string, email: string) {
+export async function getContactByEmail(
+	{ db, scoped }: OrgContext,
+	userId: string,
+	email: string,
+) {
 	const [contact] = await db
 		.select()
 		.from(contacts)
-		.where(and(eq(contacts.userId, userId), eq(contacts.email, email)))
+		.where(and(scoped(contacts), eq(contacts.userId, userId), eq(contacts.email, email)))
 		.limit(1);
 	return contact ?? null;
 }
 
 export async function saveManualContactName(
-	db: Db,
+	ctx: OrgContext,
 	input: { userId: string; email: string; displayName: string },
 ) {
-	const existing = await getContactByEmail(db, input.userId, input.email);
+	const { db, scoped, insertValues } = ctx;
+	const existing = await getContactByEmail(ctx, input.userId, input.email);
 	if (existing) {
 		await db
 			.update(contacts)
 			.set({ displayName: input.displayName, source: "manual" })
-			.where(eq(contacts.id, existing.id));
+			.where(and(scoped(contacts), eq(contacts.id, existing.id)));
 		return { ...existing, displayName: input.displayName, source: "manual" as const };
 	}
 
 	const id = getContactId(input.userId, input.email);
-	await db.insert(contacts).values({
-		id,
-		userId: input.userId,
-		email: input.email,
-		displayName: input.displayName,
-		source: "manual",
-	});
-	return getContactByEmail(db, input.userId, input.email);
+	await db.insert(contacts).values(
+		insertValues(contacts, {
+			id,
+			userId: input.userId,
+			email: input.email,
+			displayName: input.displayName,
+			source: "manual",
+		}),
+	);
+	return getContactByEmail(ctx, input.userId, input.email);
 }

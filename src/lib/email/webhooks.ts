@@ -1,19 +1,44 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { webhookDeliveries, webhooks } from "@/db/schema";
+import { users, webhookDeliveries, webhooks } from "@/db/schema";
 import { newId } from "@/lib/ids";
 import { sanitizeHtmlFields } from "@/lib/email/sanitize";
 
 export type WebhookEventType = "message.inbound" | "message.outbound" | "message.failed";
 
+/**
+ * Fans a message event out to the webhooks of one user **inside one
+ * organisation**.
+ *
+ * `orgId` is the organisation the message belongs to (`ctx.orgId`, or the
+ * mailbox's `organization_id`). When it is omitted it is resolved from the
+ * user's own organisation, so the org filter is never silently skipped; a
+ * webhook row from another organisation is never dispatched to.
+ */
 export async function dispatchWebhooks(
 	env: CloudflareEnv,
 	userId: string,
 	eventType: WebhookEventType,
 	payload: Record<string, unknown>,
+	orgId?: string,
 ): Promise<void> {
 	const db = getDb(env);
-	const hooks = await db.select().from(webhooks).where(eq(webhooks.userId, userId));
+
+	let organizationId = orgId;
+	if (!organizationId) {
+		const [owner] = await db
+			.select({ organizationId: users.organizationId })
+			.from(users)
+			.where(eq(users.id, userId))
+			.limit(1);
+		organizationId = owner?.organizationId;
+	}
+	if (!organizationId) return;
+
+	const hooks = await db
+		.select()
+		.from(webhooks)
+		.where(and(eq(webhooks.organizationId, organizationId), eq(webhooks.userId, userId)));
 
 	// Webhook consumers render whatever we hand them, so any HTML in the
 	// payload goes out sanitised; everything else is plain text.

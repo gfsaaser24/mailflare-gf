@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import {
 	getConversationWithMessages,
 	updateConversationStatus,
@@ -12,29 +10,22 @@ import { updateConversationSchema } from "@/lib/validators";
 import { requireConversationAccess, type ConversationRouteParams } from "../access";
 
 /** `GET /api/conversations/[id]` — the conversation with its messages and notes. */
-export async function GET(request: Request, { params }: ConversationRouteParams) {
+export const GET = withOrg(async (ctx, _request, { params }: ConversationRouteParams) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-	const db = getDb(env);
-	const access = await requireConversationAccess(db, user, id, "read_only");
+	const access = await requireConversationAccess(ctx, id, "read_only");
 	if ("response" in access) return access.response;
 
-	const conversation = await getConversationWithMessages(db, id);
+	const conversation = await getConversationWithMessages(ctx.db, id, ctx.orgId);
 	if (!conversation) {
 		return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
 	}
 	return NextResponse.json({ conversation });
-}
+});
 
 /** `PATCH /api/conversations/[id]` — change status and/or the snooze time. */
-export async function PATCH(request: Request, { params }: ConversationRouteParams) {
+export const PATCH = withOrg(async (ctx, request, { params }: ConversationRouteParams) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
 	let body: unknown;
 	try {
@@ -48,8 +39,7 @@ export async function PATCH(request: Request, { params }: ConversationRouteParam
 		return NextResponse.json({ error: "Invalid conversation update" }, { status: 400 });
 	}
 
-	const db = getDb(env);
-	const access = await requireConversationAccess(db, user, id, "send_on_behalf");
+	const access = await requireConversationAccess(ctx, id, "send_on_behalf");
 	if ("response" in access) return access.response;
 
 	const snoozedUntil =
@@ -62,12 +52,14 @@ export async function PATCH(request: Request, { params }: ConversationRouteParam
 		return NextResponse.json({ error: "Invalid snoozedUntil" }, { status: 400 });
 	}
 
-	const updated = await updateConversationStatus(db, id, {
-		status: parsed.data.status,
-		snoozedUntil,
-	});
+	const updated = await updateConversationStatus(
+		ctx.db,
+		id,
+		{ status: parsed.data.status, snoozedUntil },
+		ctx.orgId,
+	);
 	if (!updated) {
 		return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
 	}
 	return NextResponse.json({ conversation: updated });
-}
+});

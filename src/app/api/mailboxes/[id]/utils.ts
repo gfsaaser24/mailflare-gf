@@ -1,11 +1,10 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { domains, mailboxes } from "@/db/schema";
-import type { getDb } from "@/db";
+import type { OrgContext } from "@/lib/api/with-org";
 import type { MailboxUpdateValues } from "./types";
 
-type Db = ReturnType<typeof getDb>;
-
-export function selectMailboxForUser(db: Db, userId: string, mailboxId: string) {
+/** One mailbox of the request's organisation, joined to its domain. */
+export function selectMailboxForOrg({ db, scoped }: OrgContext, mailboxId: string) {
 	return db
 		.select({
 			id: mailboxes.id,
@@ -26,7 +25,7 @@ export function selectMailboxForUser(db: Db, userId: string, mailboxId: string) 
 		})
 		.from(mailboxes)
 		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
-		.where(eq(mailboxes.id, mailboxId))
+		.where(and(scoped(mailboxes), eq(mailboxes.id, mailboxId)))
 		.limit(1);
 }
 

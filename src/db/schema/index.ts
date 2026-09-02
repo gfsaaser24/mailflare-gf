@@ -468,9 +468,41 @@ export const sessions = pgTable("sessions", {
 		.references(() => users.id, { onDelete: "cascade" }),
 	tokenHash: text("token_hash").notNull().unique(),
 	expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+	/**
+	 * Set only on sessions minted by `POST /api/platform/orgs/[id]/impersonate`:
+	 * the platform operator acting as the session's user (T3.3). Null on every
+	 * ordinary login.
+	 */
+	impersonatedByUserId: text("impersonated_by_user_id").references(() => users.id, {
+		onDelete: "cascade",
+	}),
+	/** The organisation the operator asked to enter; kept for the audit trail. */
+	impersonatedOrganizationId: text("impersonated_organization_id").references(
+		() => organizations.id,
+	),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
+});
+
+/**
+ * Platform operators (T3.3, decision D2).
+ *
+ * Deliberately a table and not a `users.role` value: a role flag is one bad
+ * `WHERE` away from cross-tenant exposure. Membership is checked only by
+ * `requirePlatformOperator()` (`src/lib/platform/guard.ts`), which guards
+ * `/api/platform/**` and nothing else.
+ */
+export const platformOperators = pgTable("platform_operators", {
+	userId: text("user_id")
+		.primaryKey()
+		.references(() => users.id, { onDelete: "cascade" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+		.notNull()
+		.$defaultFn(() => new Date()),
+	createdByUserId: text("created_by_user_id").references((): AnyPgColumn => users.id, {
+		onDelete: "set null",
+	}),
 });
 
 export const auditLogs = pgTable(

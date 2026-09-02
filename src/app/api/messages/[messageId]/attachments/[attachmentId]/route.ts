@@ -1,5 +1,4 @@
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { getAttachmentForUser } from "@/lib/email/attachments";
 import type { AttachmentRouteParams } from "./types";
 import {
@@ -7,13 +6,9 @@ import {
 	isPreviewableAttachmentType,
 } from "./utils";
 
-export async function GET(request: Request, { params }: AttachmentRouteParams) {
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) return new Response("Unauthorized", { status: 401 });
-
+export const GET = withOrg(async (ctx, request, { params }: AttachmentRouteParams) => {
 	const { attachmentId, messageId } = await params;
-	const result = await getAttachmentForUser(env, user, messageId, attachmentId);
+	const result = await getAttachmentForUser(ctx.env, ctx.user, messageId, attachmentId, ctx.orgId);
 	if (!result) return new Response("Not found", { status: 404 });
 
 	const { attachment, object } = result;
@@ -36,4 +31,4 @@ export async function GET(request: Request, { params }: AttachmentRouteParams) {
 	headers.set("Cache-Control", "private, max-age=3600");
 
 	return new Response(object.body, { headers });
-}
+});

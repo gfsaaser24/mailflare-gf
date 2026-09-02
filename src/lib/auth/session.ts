@@ -28,18 +28,43 @@ export async function hashSessionToken(token: string): Promise<string> {
 		.join("");
 }
 
-export async function createSession(env: CloudflareEnv, userId: string): Promise<string> {
+/**
+ * Optional extras for a session. Only `/api/platform/orgs/[id]/impersonate`
+ * (T3.3) passes them; ordinary logins call `createSession(env, userId)`.
+ */
+export type CreateSessionOptions = {
+	/** Lifetime in milliseconds. Defaults to `SESSION_DAYS`. */
+	expiresInMs?: number;
+	/** Platform operator acting as this user. */
+	impersonatedByUserId?: string;
+	/** Organisation the operator asked to enter. */
+	impersonatedOrganizationId?: string;
+};
+
+export async function createSession(
+	env: CloudflareEnv,
+	userId: string,
+	options: CreateSessionOptions = {},
+): Promise<string> {
 	const db = getDb(env);
 	const token = generateSessionToken();
 	const tokenHash = await hashSessionToken(token);
-	const expiresAt = new Date();
-	expiresAt.setDate(expiresAt.getDate() + SESSION_DAYS);
+	const expiresAt =
+		options.expiresInMs === undefined
+			? (() => {
+					const at = new Date();
+					at.setDate(at.getDate() + SESSION_DAYS);
+					return at;
+				})()
+			: new Date(Date.now() + options.expiresInMs);
 
 	await db.insert(sessions).values({
 		id: newId(),
 		userId,
 		tokenHash,
 		expiresAt,
+		impersonatedByUserId: options.impersonatedByUserId ?? null,
+		impersonatedOrganizationId: options.impersonatedOrganizationId ?? null,
 	});
 
 	return token;
@@ -55,7 +80,7 @@ export async function createSession(env: CloudflareEnv, userId: string): Promise
 export async function getUserFromSession(
 	env: CloudflareEnv,
 	token: string | undefined,
-): Promise<typeof users.$inferSelect | null> {
+): Promise<(typeof users.$inferSelect & { impersonatedByUserId: string | null }) | null> {
 	if (!token) return null;
 	const db = getDb(env);
 	const tokenHash = await hashSessionToken(token);
@@ -66,7 +91,9 @@ export async function getUserFromSession(
 		.limit(1);
 	if (!session) return null;
 	const [user] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
-	return user ?? null;
+	if (!user) return null;
+	// Additive: null on every ordinary session, the operator's id while impersonating.
+	return { ...user, impersonatedByUserId: session.impersonatedByUserId };
 }
 
 export async function deleteSession(env: CloudflareEnv, token: string): Promise<void> {

@@ -1,17 +1,13 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { getDb } from "@/db";
 import { users } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
+import { withOrg } from "@/lib/api/with-org";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
-import { getEnv } from "@/lib/cloudflare";
 import type { ChangePasswordInput } from "./types";
 import { parseChangePasswordRequest } from "./utils";
 
-export async function PATCH(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const PATCH = withOrg(async ({ db, user, scoped }, request) => {
 	let parsed: ChangePasswordInput;
 
 	try {
@@ -28,14 +24,16 @@ export async function PATCH(request: Request) {
 	}
 
 	if (verifyPassword(parsed.newPassword, user.passwordHash)) {
-		return NextResponse.json({ error: "New password must be different from the current password" }, { status: 400 });
+		return NextResponse.json(
+			{ error: "New password must be different from the current password" },
+			{ status: 400 },
+		);
 	}
 
-	const db = getDb(env);
 	await db
 		.update(users)
 		.set({ passwordHash: hashPassword(parsed.newPassword) })
-		.where(eq(users.id, user.id));
+		.where(and(scoped(users), eq(users.id, user.id)));
 
 	return NextResponse.json({ ok: true });
-}
+});

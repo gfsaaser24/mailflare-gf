@@ -2,17 +2,19 @@ import { and, desc, eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import type { getDb } from "@/db";
 import { domains, mailboxes, users } from "@/db/schema";
-import { assertAdmin } from "@/lib/auth/admin";
-import { requireUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import type { OrgContext } from "@/lib/api/with-org";
+import { isAdmin } from "@/lib/auth/admin";
 
 type Db = ReturnType<typeof getDb>;
 
 /**
- * Accounts visible to an admin: the admin themselves plus every account they
- * created. (Org scoping replaces this in Wave 3; stop-gap for T1.4.)
+ * Accounts visible to an admin inside one organisation: the admin themselves plus
+ * every account they created.
+ *
+ * `orgId` is `ctx.orgId` from `withOrg`; it is optional only so the unit test that
+ * exercises the created-by tree can call this with a bare database handle.
  */
-export function listAccountsForAdmin(db: Db, adminUserId: string) {
+export function listAccountsForAdmin(db: Db, adminUserId: string, orgId?: string) {
 	return db
 		.select({
 			id: users.id,
@@ -26,24 +28,39 @@ export function listAccountsForAdmin(db: Db, adminUserId: string) {
 			createdAt: users.createdAt,
 		})
 		.from(users)
-		.where(or(eq(users.id, adminUserId), eq(users.createdByUserId, adminUserId)))
+		.where(
+			and(
+				...(orgId ? [eq(users.organizationId, orgId)] : []),
+				or(eq(users.id, adminUserId), eq(users.createdByUserId, adminUserId)),
+			),
+		)
 		.orderBy(desc(users.createdAt));
 }
 
-export async function getDomainForAdmin(db: Db, adminUserId: string, domainId: string) {
+export async function getDomainForAdmin(
+	{ db, scoped }: OrgContext,
+	adminUserId: string,
+	domainId: string,
+) {
 	const [domain] = await db
 		.select()
 		.from(domains)
-		.where(and(eq(domains.id, domainId), eq(domains.userId, adminUserId)))
+		.where(and(scoped(domains), eq(domains.id, domainId), eq(domains.userId, adminUserId)))
 		.limit(1);
 	return domain ?? null;
 }
 
-export async function getExistingMailbox(db: Db, domainId: string, localPart: string) {
+export async function getExistingMailbox(
+	{ db, scoped }: OrgContext,
+	domainId: string,
+	localPart: string,
+) {
 	const [mailbox] = await db
 		.select()
 		.from(mailboxes)
-		.where(and(eq(mailboxes.domainId, domainId), eq(mailboxes.localPart, localPart)))
+		.where(
+			and(scoped(mailboxes), eq(mailboxes.domainId, domainId), eq(mailboxes.localPart, localPart)),
+		)
 		.limit(1);
 	return mailbox ?? null;
 }
@@ -72,13 +89,10 @@ export function accountListItemFromUser(user: {
 	};
 }
 
-export async function requireTeamAdmin(request: Request) {
-	const env = getEnv();
-	try {
-		const user = await requireUser(env, request);
-		assertAdmin(user);
-		return { env, user, error: null };
-	} catch {
-		return { env, user: null, error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-	}
+/**
+ * Team administration is admin-only. `withOrg` has already authenticated the caller
+ * and pinned the organisation, so this only checks the role.
+ */
+export function requireTeamAdmin(ctx: OrgContext): NextResponse | null {
+	return isAdmin(ctx.user) ? null : NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }

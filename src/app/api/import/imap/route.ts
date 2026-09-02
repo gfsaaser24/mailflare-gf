@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
-import { getDb } from "@/db";
 import { folders } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { readJsonBody } from "@/lib/http/request";
 import { getImportMessageUserId } from "@/lib/import/destination";
@@ -15,9 +13,7 @@ import { parseImapImportRequest } from "./utils";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const POST = withOrg(async ({ db, env, user, orgId, scoped }, request) => {
 	let input: ReturnType<typeof parseImapImportRequest>;
 	try {
 		const body = await readJsonBody<ImapImportRequest>(request, 16 * 1024);
@@ -27,16 +23,21 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid IMAP import request" }, { status });
 	}
 
-	const access = await getMailboxAccessLevel(getDb(env), user, input.mailboxId);
+	const access = await getMailboxAccessLevel(db, user, input.mailboxId, orgId);
 	if (!access?.canManage) {
 		return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
 	}
 	if (input.destination.type === "folder") {
-		const db = getDb(env);
 		const [folder] = await db
 			.select({ id: folders.id })
 			.from(folders)
-			.where(and(eq(folders.id, input.destination.folderId), eq(folders.mailboxId, access.mailbox.id)))
+			.where(
+				and(
+					scoped(folders),
+					eq(folders.id, input.destination.folderId),
+					eq(folders.mailboxId, access.mailbox.id),
+				),
+			)
 			.limit(1);
 		if (!folder) {
 			return NextResponse.json({ error: "Folder not found" }, { status: 404 });
@@ -45,7 +46,9 @@ export async function POST(request: Request) {
 
 	try {
 		const rawMessages = await fetchImapMessages(input);
+		// Every message and contact the import writes is stamped with `orgId`.
 		const result = await importMessagesToMailbox(env, {
+			organizationId: orgId,
 			userId: getImportMessageUserId(input.destination, user.id, access.mailbox.userId),
 			mailboxId: access.mailbox.id,
 			destination: input.destination,
@@ -58,4 +61,4 @@ export async function POST(request: Request) {
 			{ status: 502 },
 		);
 	}
-}
+});

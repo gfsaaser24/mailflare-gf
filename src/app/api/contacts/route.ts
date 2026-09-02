@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
-import { requireUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { normalizeEmailAddress } from "@/lib/email/address";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import type { ContactRequestInput } from "./types";
 import { getContactByEmail, saveManualContactName } from "./utils";
 
-export async function GET(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const GET = withOrg(async (ctx, request) => {
 	const url = new URL(request.url);
 	const mailboxId = url.searchParams.get("mailboxId");
 	const email = normalizeEmailAddress(url.searchParams.get("address") ?? "");
@@ -17,12 +13,11 @@ export async function GET(request: Request) {
 		return NextResponse.json({ error: "Mailbox and contact are required" }, { status: 400 });
 	}
 
-	const db = getDb(env);
-	const access = await getMailboxAccessLevel(db, user, mailboxId);
+	const access = await getMailboxAccessLevel(ctx.db, ctx.user, mailboxId, ctx.orgId);
 	if (!access?.canRead) {
 		return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
 	}
-	const contact = await getContactByEmail(db, access.mailbox.userId, email);
+	const contact = await getContactByEmail(ctx, access.mailbox.userId, email);
 	return NextResponse.json({
 		contact: contact ?? {
 			email,
@@ -32,11 +27,9 @@ export async function GET(request: Request) {
 			lastSeenAt: null,
 		},
 	});
-}
+});
 
-export async function PATCH(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const PATCH = withOrg(async (ctx, request) => {
 	const body = (await request.json()) as ContactRequestInput;
 	const email = normalizeEmailAddress(body.address ?? "");
 	const displayName = body.displayName?.trim() ?? "";
@@ -44,15 +37,14 @@ export async function PATCH(request: Request) {
 		return NextResponse.json({ error: "A valid contact name is required" }, { status: 400 });
 	}
 
-	const db = getDb(env);
-	const access = await getMailboxAccessLevel(db, user, body.mailboxId);
+	const access = await getMailboxAccessLevel(ctx.db, ctx.user, body.mailboxId, ctx.orgId);
 	if (!access?.canManage) {
 		return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
 	}
-	const contact = await saveManualContactName(db, {
+	const contact = await saveManualContactName(ctx, {
 		userId: access.mailbox.userId,
 		email,
 		displayName,
 	});
 	return NextResponse.json({ contact });
-}
+});

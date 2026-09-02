@@ -4,6 +4,7 @@ import { contacts, routingRules } from "@/db/schema";
 import { normalizeEmailAddress } from "@/lib/email/address";
 import type { BlockContactInput, ContactInput, MessageContactNames } from "@/lib/contacts/types";
 import { getContactId, getContactNameFromAddress } from "@/lib/contacts/utils";
+import { getUserOrganizationId } from "@/lib/organizations/service";
 
 export async function upsertContactFromAddress(env: CloudflareEnv, input: ContactInput) {
 	const email = normalizeEmailAddress(input.address);
@@ -11,10 +12,17 @@ export async function upsertContactFromAddress(env: CloudflareEnv, input: Contac
 
 	const displayName = getContactNameFromAddress(input.address);
 	const db = getDb(env);
+	const organizationId = input.organizationId ?? (await getUserOrganizationId(db, input.userId));
 	const [existing] = await db
 		.select()
 		.from(contacts)
-		.where(and(eq(contacts.userId, input.userId), eq(contacts.email, email)))
+		.where(
+			and(
+				eq(contacts.organizationId, organizationId),
+				eq(contacts.userId, input.userId),
+				eq(contacts.email, email),
+			),
+		)
 		.limit(1);
 	const now = new Date();
 
@@ -29,13 +37,14 @@ export async function upsertContactFromAddress(env: CloudflareEnv, input: Contac
 				source: nextSource,
 				lastSeenAt: now,
 			})
-			.where(eq(contacts.id, existing.id));
+			.where(and(eq(contacts.organizationId, organizationId), eq(contacts.id, existing.id)));
 		return { ...existing, displayName: nextDisplayName, source: nextSource, lastSeenAt: now };
 	}
 
 	const id = getContactId(input.userId, email);
 	await db.insert(contacts).values({
 		id,
+		organizationId,
 		userId: input.userId,
 		email,
 		displayName,
@@ -43,19 +52,35 @@ export async function upsertContactFromAddress(env: CloudflareEnv, input: Contac
 		lastSeenAt: now,
 	});
 
-	const [created] = await db.select().from(contacts).where(eq(contacts.id, id)).limit(1);
+	const [created] = await db
+		.select()
+		.from(contacts)
+		.where(and(eq(contacts.organizationId, organizationId), eq(contacts.id, id)))
+		.limit(1);
 	return created ?? null;
 }
 
-export async function getContactDisplayNameMap(env: CloudflareEnv, userId: string, addresses: string[]) {
+export async function getContactDisplayNameMap(
+	env: CloudflareEnv,
+	userId: string,
+	addresses: string[],
+	organizationId?: string,
+) {
 	const emails = Array.from(new Set(addresses.map(normalizeEmailAddress).filter(Boolean)));
 	if (emails.length === 0) return new Map<string, string>();
 
 	const db = getDb(env);
+	const resolvedOrganizationId = organizationId ?? (await getUserOrganizationId(db, userId));
 	const rows = await db
 		.select()
 		.from(contacts)
-		.where(and(eq(contacts.userId, userId), inArray(contacts.email, emails)));
+		.where(
+			and(
+				eq(contacts.organizationId, resolvedOrganizationId),
+				eq(contacts.userId, userId),
+				inArray(contacts.email, emails),
+			),
+		);
 
 	return new Map(
 		rows
@@ -69,8 +94,14 @@ export async function getMessageContactNames(
 	userId: string,
 	fromAddr: string,
 	toAddr: string,
+	organizationId?: string,
 ): Promise<MessageContactNames> {
-	const contactMap = await getContactDisplayNameMap(env, userId, [fromAddr, toAddr]);
+	const contactMap = await getContactDisplayNameMap(
+		env,
+		userId,
+		[fromAddr, toAddr],
+		organizationId,
+	);
 
 	return {
 		fromContactName: contactMap.get(normalizeEmailAddress(fromAddr)) ?? null,
@@ -83,17 +114,28 @@ export async function blockContact(env: CloudflareEnv, input: BlockContactInput)
 	if (!email) throw new Error("Contact email is required");
 
 	const db = getDb(env);
+	const organizationId = input.organizationId;
 	const contactId = getContactId(input.userId, email);
 	const [existingContact] = await db
 		.select()
 		.from(contacts)
-		.where(and(eq(contacts.userId, input.userId), eq(contacts.email, email)))
+		.where(
+			and(
+				eq(contacts.organizationId, organizationId),
+				eq(contacts.userId, input.userId),
+				eq(contacts.email, email),
+			),
+		)
 		.limit(1);
 	if (existingContact) {
-		await db.update(contacts).set({ blocked: true }).where(eq(contacts.id, existingContact.id));
+		await db
+			.update(contacts)
+			.set({ blocked: true })
+			.where(and(eq(contacts.organizationId, organizationId), eq(contacts.id, existingContact.id)));
 	} else {
 		await db.insert(contacts).values({
 			id: contactId,
+			organizationId,
 			userId: input.userId,
 			email,
 			displayName: getContactNameFromAddress(input.address),
@@ -108,6 +150,7 @@ export async function blockContact(env: CloudflareEnv, input: BlockContactInput)
 		.from(routingRules)
 		.where(
 			and(
+				eq(routingRules.organizationId, organizationId),
 				eq(routingRules.mailboxId, input.mailboxId),
 				eq(routingRules.matchField, "email"),
 				eq(routingRules.matchOperator, "exact"),
@@ -119,6 +162,7 @@ export async function blockContact(env: CloudflareEnv, input: BlockContactInput)
 	if (!existingRule) {
 		await db.insert(routingRules).values({
 			id: `block:${input.mailboxId}:${email}`,
+			organizationId,
 			userId: input.userId,
 			domainId: input.domainId,
 			pattern: email,

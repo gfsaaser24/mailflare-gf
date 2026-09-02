@@ -1,10 +1,9 @@
-import { eq } from "drizzle-orm";
-import type { getDb } from "@/db";
+import { and, eq } from "drizzle-orm";
 import { messages } from "@/db/schema";
+import type { OrgContext } from "@/lib/api/with-org";
 
-type Db = ReturnType<typeof getDb>;
-
-export function selectDraftWithBody(db: Db, userId: string, draftId: string) {
+/** The draft with its body, or null when it is not this user's draft in this organisation. */
+export function selectDraftWithBody({ db, scoped }: OrgContext, userId: string, draftId: string) {
 	return db
 		.select({
 			id: messages.id,
@@ -18,7 +17,7 @@ export function selectDraftWithBody(db: Db, userId: string, draftId: string) {
 			htmlBody: messages.htmlBody,
 		})
 		.from(messages)
-		.where(eq(messages.id, draftId))
+		.where(and(scoped(messages), eq(messages.id, draftId)))
 		.limit(1)
 		.then(([draft]) => (draft && draft.userId === userId && draft.status === "draft" ? draft : null));
 }

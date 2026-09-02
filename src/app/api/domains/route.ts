@@ -1,6 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getEnv } from "@/lib/cloudflare";
-import { requireUser } from "@/lib/auth/cookies";
+import { NextResponse } from "next/server";
+import { withOrg } from "@/lib/api/with-org";
 import { addDomainSchema } from "@/lib/validators";
 import { addDomainForUser, listUserDomains } from "@/lib/domains/service";
 import { DomainProvisionError } from "@/lib/domains/provision";
@@ -10,26 +9,25 @@ import { DomainProvisionError } from "@/lib/domains/provision";
  * recomputed per request: `POST /api/domains/[id]/reconcile` (and the nightly
  * `scripts/reconcile-domains.ts`) own `status`, `status_reason`, `dns_ok` and
  * `last_checked_at`.
+ *
+ * Scoping lives in `@/lib/domains/service`: every helper takes `ctx.orgId` and
+ * filters on it, so a domain in another organisation is invisible here.
  */
-export async function GET(request: NextRequest) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const GET = withOrg(async ({ env, user, orgId }) => {
 	const domainOwnerId = user.canManageMailboxes && user.createdByUserId ? user.createdByUserId : user.id;
-	const domains = await listUserDomains(env, domainOwnerId);
+	const domains = await listUserDomains(env, orgId, domainOwnerId);
 
 	return NextResponse.json({ domains });
-}
+});
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const POST = withOrg(async ({ env, user, orgId }, request) => {
 	const parsed = addDomainSchema.safeParse(await request.json());
 	if (!parsed.success) {
 		return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 	}
 
 	try {
-		const result = await addDomainForUser(env, user.id, parsed.data.hostname, {
+		const result = await addDomainForUser(env, orgId, user.id, parsed.data.hostname, {
 			enableRouting: parsed.data.enableRouting,
 			enableSending: parsed.data.enableSending,
 		});
@@ -43,4 +41,4 @@ export async function POST(request: Request) {
 		}
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
-}
+});

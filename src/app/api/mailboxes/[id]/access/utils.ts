@@ -1,14 +1,24 @@
 import { and, eq } from "drizzle-orm";
-import type { getDb } from "@/db";
 import { mailboxes } from "@/db/schema";
+import type { OrgContext } from "@/lib/api/with-org";
 
-type Db = ReturnType<typeof getDb>;
-
-export async function getSharedMailboxForAdmin(db: Db, mailboxId: string, adminUserId: string) {
+/** A shared inbox owned by this admin, inside the request's organisation. */
+export async function getSharedMailboxForAdmin(
+	{ db, scoped }: OrgContext,
+	mailboxId: string,
+	adminUserId: string,
+) {
 	const [mailbox] = await db
 		.select({ id: mailboxes.id })
 		.from(mailboxes)
-		.where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.userId, adminUserId), eq(mailboxes.type, "shared")))
+		.where(
+			and(
+				scoped(mailboxes),
+				eq(mailboxes.id, mailboxId),
+				eq(mailboxes.userId, adminUserId),
+				eq(mailboxes.type, "shared"),
+			),
+		)
 		.limit(1);
 	return mailbox ?? null;
 }

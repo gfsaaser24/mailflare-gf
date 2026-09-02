@@ -1,16 +1,12 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { getDb } from "@/db";
 import { users } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import type { UpdateForwardingEmailInput } from "./types";
 import { parseUpdateForwardingEmailRequest } from "./utils";
 
-export async function PATCH(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const PATCH = withOrg(async ({ db, user, scoped }, request) => {
 	let input: UpdateForwardingEmailInput;
 	try {
 		input = await parseUpdateForwardingEmailRequest(request);
@@ -21,10 +17,10 @@ export async function PATCH(request: Request) {
 		return NextResponse.json({ error: "Invalid request" }, { status: 400 });
 	}
 
-	await getDb(env)
+	await db
 		.update(users)
 		.set({ forwardingEmail: input.forwardingEmail })
-		.where(eq(users.id, user.id));
+		.where(and(scoped(users), eq(users.id, user.id)));
 
 	return NextResponse.json({ forwardingEmail: input.forwardingEmail });
-}
+});

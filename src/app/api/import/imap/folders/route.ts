@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { readJsonBody } from "@/lib/http/request";
 import { listImapFolders } from "@/lib/import/imap";
@@ -9,9 +8,8 @@ import { parseImapFolderListRequest } from "./utils";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	await requireUser(env, request);
+/** Touches no tenant table: it only talks to the remote IMAP server. */
+export const POST = withOrg(async (_ctx, request) => {
 	let input: ReturnType<typeof parseImapFolderListRequest>;
 	try {
 		const body = await readJsonBody<ImapFolderListRequest>(request, 16 * 1024);
@@ -30,4 +28,4 @@ export async function POST(request: Request) {
 			{ status: 502 },
 		);
 	}
-}
+});

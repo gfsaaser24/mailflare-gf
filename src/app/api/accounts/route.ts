@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, eq } from "drizzle-orm";
 import { mailboxes, users } from "@/db/schema";
+import { withOrg } from "@/lib/api/with-org";
 import { hashPassword } from "@/lib/auth/password";
 import { newId } from "@/lib/ids";
 import { createUserAccountSchema } from "@/lib/validators";
@@ -16,18 +16,18 @@ import {
 	requireTeamAdmin,
 } from "./utils";
 
-export async function GET(request: Request) {
-	const access = await requireTeamAdmin(request);
-	if (access.error) return access.error;
-	const rows = await listAccountsForAdmin(getDb(access.env), access.user!.id);
+export const GET = withOrg(async (ctx) => {
+	const forbidden = requireTeamAdmin(ctx);
+	if (forbidden) return forbidden;
+	const rows = await listAccountsForAdmin(ctx.db, ctx.user.id, ctx.orgId);
 	return NextResponse.json({
 		accounts: rows.map((row) => accountListItemFromUser(row)),
 	});
-}
+});
 
-export async function POST(request: Request) {
-	const access = await requireTeamAdmin(request);
-	if (access.error) return access.error;
+export const POST = withOrg(async (ctx, request) => {
+	const forbidden = requireTeamAdmin(ctx);
+	if (forbidden) return forbidden;
 
 	const parsed = createUserAccountSchema.safeParse(await request.json());
 	if (!parsed.success) {
@@ -35,29 +35,34 @@ export async function POST(request: Request) {
 	}
 
 	const input: CreateUserAccountInput = parsed.data;
-	const db = getDb(access.env);
-	const domain = await getDomainForAdmin(db, access.user!.id, input.domainId);
+	const { db, env, insertValues } = ctx;
+	const domain = await getDomainForAdmin(ctx, ctx.user.id, input.domainId);
 	if (!domain) return NextResponse.json({ error: "Domain not found" }, { status: 404 });
 	const username = input.username.toLowerCase().trim();
 	const email = `${username}@${domain.hostname}`;
+	// users.email is unique across the whole instance, so this one lookup stays global:
+	// an org-scoped check would answer 409 late, as a unique-violation crash.
+	// eslint-disable-next-line mailflare/require-org-scope -- global uniqueness check, reveals no org data
 	const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
 	if (existing) return NextResponse.json({ error: "Email already registered" }, { status: 409 });
-	const mailbox = await getExistingMailbox(db, domain.id, username);
+	const mailbox = await getExistingMailbox(ctx, domain.id, username);
 	if (mailbox) return NextResponse.json({ error: "Email address is already assigned" }, { status: 409 });
 
 	const userId = newId("usr");
 	try {
-		await ensureEmailRoutingRuleToWorker(access.env, domain.zoneId, email);
+		await ensureEmailRoutingRuleToWorker(env, domain.zoneId, email);
 		const [account] = await db
 			.insert(users)
-			.values({
-				id: userId,
-				email,
-				passwordHash: hashPassword(input.password),
-				name: username,
-				role: input.role,
-				createdByUserId: access.user!.id,
-			})
+			.values(
+				insertValues(users, {
+					id: userId,
+					email,
+					passwordHash: hashPassword(input.password),
+					name: username,
+					role: input.role,
+					createdByUserId: ctx.user.id,
+				}),
+			)
 			.returning({
 				id: users.id,
 				email: users.email,
@@ -68,19 +73,26 @@ export async function POST(request: Request) {
 				createdAt: users.createdAt,
 			});
 		const mailboxId = newId("mbx");
-		await db.insert(mailboxes).values({
-			id: mailboxId,
-			userId,
-			domainId: domain.id,
-			localPart: username,
-			displayName: username,
-		});
-		await ensureMailboxDomainRouting(access.env, db, { id: mailboxId, domainId: domain.id, localPart: username, useAllDomains: true });
+		await db.insert(mailboxes).values(
+			insertValues(mailboxes, {
+				id: mailboxId,
+				userId,
+				domainId: domain.id,
+				localPart: username,
+				displayName: username,
+			}),
+		);
+		await ensureMailboxDomainRouting(
+			env,
+			db,
+			{ id: mailboxId, domainId: domain.id, localPart: username, useAllDomains: true },
+			ctx.orgId,
+		);
 
 		return NextResponse.json({ account: accountListItemFromUser(account) }, { status: 201 });
 	} catch (error) {
-		await db.delete(users).where(eq(users.id, userId));
+		await db.delete(users).where(and(ctx.scoped(users), eq(users.id, userId)));
 		const message = error instanceof Error ? error.message : "Failed to create account mailbox";
 		return NextResponse.json({ error: message }, { status: 502 });
 	}
-}
+});

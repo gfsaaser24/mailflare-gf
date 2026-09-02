@@ -1,9 +1,7 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
 import { folders, messages } from "@/db/schema";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import { createAuditLog } from "@/lib/mailboxes/audit";
 import type { BulkMessagePayload } from "./types";
@@ -13,13 +11,7 @@ import {
 	isAllowedBulkMessageAction,
 } from "./utils";
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) {
-		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-	}
-
+export const POST = withOrg(async ({ env, db, user, orgId, scoped }, request) => {
 	const payload = (await request.json()) as BulkMessagePayload;
 	const messageIds = payload.messageIds?.filter(Boolean) ?? [];
 	if (messageIds.length === 0 || !isAllowedBulkMessageAction(payload.action)) {
@@ -28,7 +20,6 @@ export async function POST(request: Request) {
 
 	const status = getStatusForBulkAction(payload.action);
 	const read = getReadValueForBulkAction(payload.action);
-	const db = getDb(env);
 	let folderId: string | null | undefined;
 
 	if (payload.action === "folder") {
@@ -38,12 +29,12 @@ export async function POST(request: Request) {
 		const [folder] = await db
 			.select({ id: folders.id, mailboxId: folders.mailboxId })
 			.from(folders)
-			.where(eq(folders.id, payload.folderId))
+			.where(and(scoped(folders), eq(folders.id, payload.folderId)))
 			.limit(1);
 		if (!folder) {
 			return NextResponse.json({ error: "Folder not found" }, { status: 404 });
 		}
-		const folderAccess = await getMailboxAccessLevel(db, user, folder.mailboxId);
+		const folderAccess = await getMailboxAccessLevel(db, user, folder.mailboxId, orgId);
 		if (!folderAccess?.canManage) {
 			return NextResponse.json({ error: "Folder not found" }, { status: 404 });
 		}
@@ -62,12 +53,15 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: "No changes requested" }, { status: 400 });
 	}
 
-	const selectedMessages = await db.select().from(messages).where(inArray(messages.id, messageIds));
+	const selectedMessages = await db
+		.select()
+		.from(messages)
+		.where(and(scoped(messages), inArray(messages.id, messageIds)));
 	const allowedMessageIds: string[] = [];
 
 	for (const message of selectedMessages) {
 		if (!message.mailboxId) continue;
-		const access = await getMailboxAccessLevel(db, user, message.mailboxId);
+		const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
 		const canUpdate = payload.action === "read" || payload.action === "unread" ? access?.canRead : access?.canManage;
 		if (!canUpdate) continue;
 		allowedMessageIds.push(message.id);
@@ -77,7 +71,10 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: "No accessible messages" }, { status: 404 });
 	}
 
-	await db.update(messages).set(values).where(inArray(messages.id, allowedMessageIds));
+	await db
+		.update(messages)
+		.set(values)
+		.where(and(scoped(messages), inArray(messages.id, allowedMessageIds)));
 	await Promise.all(
 		allowedMessageIds.map((messageId) =>
 			createAuditLog(env, {
@@ -90,4 +87,4 @@ export async function POST(request: Request) {
 	);
 
 	return NextResponse.json({ ok: true });
-}
+});

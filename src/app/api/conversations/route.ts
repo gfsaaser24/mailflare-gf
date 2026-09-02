@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { listConversations } from "@/lib/conversations/service";
 import { getMailboxAccessLevel, listAccessibleMailboxIds } from "@/lib/mailboxes/access";
 import { conversationListQuerySchema } from "@/lib/validators";
@@ -12,11 +10,7 @@ import { conversationListQuerySchema } from "@/lib/validators";
  * Without `mailboxId` the page spans every mailbox the caller can read.
  * Paging is keyset-based on `(last_message_at, id)`; pass back `nextCursor`.
  */
-export async function GET(request: Request) {
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+export const GET = withOrg(async (ctx, request) => {
 	const url = new URL(request.url);
 	const parsed = conversationListQuerySchema.safeParse(
 		Object.fromEntries(
@@ -28,19 +22,19 @@ export async function GET(request: Request) {
 	}
 	const query = parsed.data;
 
-	const db = getDb(env);
 	let mailboxIds: string[];
 	if (query.mailboxId) {
-		const access = await getMailboxAccessLevel(db, user, query.mailboxId);
+		const access = await getMailboxAccessLevel(ctx.db, ctx.user, query.mailboxId, ctx.orgId);
 		if (!access?.canRead) {
 			return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
 		}
 		mailboxIds = [query.mailboxId];
 	} else {
-		mailboxIds = await listAccessibleMailboxIds(db, user);
+		mailboxIds = await listAccessibleMailboxIds(ctx.db, ctx.user);
 	}
 
-	const page = await listConversations(db, {
+	const page = await listConversations(ctx.db, {
+		orgId: ctx.orgId,
 		mailboxIds,
 		status: query.status ?? null,
 		assignedUserId: query.assignedUserId ?? null,
@@ -50,4 +44,4 @@ export async function GET(request: Request) {
 	});
 
 	return NextResponse.json(page);
-}
+});

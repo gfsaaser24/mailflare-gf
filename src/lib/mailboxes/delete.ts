@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db";
 import { domains, mailboxes, messages } from "@/db/schema";
 import { deleteEmailRoutingRule, listEmailRoutingRules } from "@/lib/cloudflare-api";
@@ -50,12 +50,15 @@ function errorMessage(error: unknown): string {
 export async function collectMailboxRoutingTargets(
 	db: AppDatabase,
 	mailbox: MailboxDeleteInput,
+	orgId?: string,
 ): Promise<RoutingTarget[]> {
 	const localPart = mailbox.localPart.toLowerCase();
 	const ownerDomains = await db
 		.select({ id: domains.id, hostname: domains.hostname, zoneId: domains.zoneId })
 		.from(domains)
-		.where(eq(domains.userId, mailbox.userId));
+		.where(
+			and(eq(domains.userId, mailbox.userId), ...(orgId ? [eq(domains.organizationId, orgId)] : [])),
+		);
 
 	const primary = ownerDomains.find((domain) => domain.id === mailbox.domainId);
 	if (!primary) return [];
@@ -68,7 +71,12 @@ export async function collectMailboxRoutingTargets(
 	const claimed = await db
 		.select({ id: mailboxes.id, domainId: mailboxes.domainId })
 		.from(mailboxes)
-		.where(eq(mailboxes.localPart, mailbox.localPart));
+		.where(
+			and(
+				eq(mailboxes.localPart, mailbox.localPart),
+				...(orgId ? [eq(mailboxes.organizationId, orgId)] : []),
+			),
+		);
 	const claimedDomainIds = new Set(
 		claimed.filter((row) => row.id !== mailbox.id).map((row) => row.domainId),
 	);
@@ -162,15 +170,19 @@ export async function deleteMailbox(
 	env: CloudflareEnv,
 	db: AppDatabase,
 	mailbox: MailboxDeleteInput,
-	options?: { actorUserId?: string | null },
+	/** `orgId` is the caller's organisation (`ctx.orgId`); every query is kept inside it. */
+	options?: { actorUserId?: string | null; orgId?: string },
 ): Promise<MailboxDeleteCounts> {
-	const targets = await collectMailboxRoutingTargets(db, mailbox);
+	const orgId = options?.orgId;
+	const inOrgMessages = orgId ? [eq(messages.organizationId, orgId)] : [];
+	const inOrgMailboxes = orgId ? [eq(mailboxes.organizationId, orgId)] : [];
+	const targets = await collectMailboxRoutingTargets(db, mailbox, orgId);
 	const rules = await deleteMailboxRoutingRules(env, targets);
 
 	const mailboxMessages = await db
 		.select({ id: messages.id, rawR2Key: messages.rawR2Key })
 		.from(messages)
-		.where(eq(messages.mailboxId, mailbox.id));
+		.where(and(eq(messages.mailboxId, mailbox.id), ...inOrgMessages));
 	const messageIds = mailboxMessages.map((message) => message.id);
 
 	const attachmentResult = await deleteAttachmentsForMessages(env, messageIds);
@@ -184,8 +196,8 @@ export async function deleteMailbox(
 	await db.transaction(async (tx) => {
 		// messages.mailbox_id is ON DELETE SET NULL, so those rows must go explicitly.
 		// message_attachments cascade from messages.
-		await tx.delete(messages).where(eq(messages.mailboxId, mailbox.id));
-		await tx.delete(mailboxes).where(eq(mailboxes.id, mailbox.id));
+		await tx.delete(messages).where(and(eq(messages.mailboxId, mailbox.id), ...inOrgMessages));
+		await tx.delete(mailboxes).where(and(eq(mailboxes.id, mailbox.id), ...inOrgMailboxes));
 	});
 
 	const counts: MailboxDeleteCounts = { rules, objects, messages: messageIds.length };

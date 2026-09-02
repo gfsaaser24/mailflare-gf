@@ -15,12 +15,30 @@ export function hasMailboxPermission(permission: MailboxPermission, required: Ma
 	return permissionRank[permission] >= permissionRank[required];
 }
 
+/**
+ * Access one user has to one mailbox.
+ *
+ * `orgId` is the caller's organisation (`ctx.orgId` from `withOrg`): pass it and a
+ * mailbox in another organisation is treated as missing, which also stops a stray
+ * `mailbox_access` row (that table has no `organization_id`) from granting access
+ * across organisations. It is optional only while routes are still being migrated.
+ */
 export async function getMailboxAccessLevel(
 	db: AppDatabase,
 	user: Pick<SessionUser, "id" | "role">,
 	mailboxId: string,
+	orgId?: string,
 ): Promise<MailboxAccessLevel | null> {
-	const [mailbox] = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+	const [mailbox] = await db
+		.select()
+		.from(mailboxes)
+		.where(
+			and(
+				eq(mailboxes.id, mailboxId),
+				...(orgId ? [eq(mailboxes.organizationId, orgId)] : []),
+			),
+		)
+		.limit(1);
 	if (!mailbox || mailbox.disabled) return null;
 
 	const isOwner = mailbox.userId === user.id;
@@ -37,7 +55,13 @@ export async function getMailboxAccessLevel(
 	return null;
 }
 
-export async function listAccessibleMailboxes(db: AppDatabase, user: Pick<SessionUser, "id" | "email" | "role">) {
+/** Every mailbox a user can open. Pass `orgId` to keep the list inside one organisation. */
+export async function listAccessibleMailboxes(
+	db: AppDatabase,
+	user: Pick<SessionUser, "id" | "email" | "role">,
+	orgId?: string,
+) {
+	const inOrg = orgId ? [eq(mailboxes.organizationId, orgId)] : [];
 	const ownedRows = await db
 		.select({
 			id: mailboxes.id,
@@ -58,7 +82,7 @@ export async function listAccessibleMailboxes(db: AppDatabase, user: Pick<Sessio
 		})
 		.from(mailboxes)
 		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
-		.where(and(eq(mailboxes.userId, user.id), eq(mailboxes.disabled, false)));
+		.where(and(eq(mailboxes.userId, user.id), eq(mailboxes.disabled, false), ...inOrg));
 	const owned = ownedRows
 		.map((row) => {
 			const { avatarKey, ...mailbox } = row;
@@ -97,6 +121,7 @@ export async function listAccessibleMailboxes(db: AppDatabase, user: Pick<Sessio
 				eq(mailboxAccess.userId, user.id),
 				eq(mailboxes.type, "shared"),
 				eq(mailboxes.disabled, false),
+				...inOrg,
 			),
 		);
 	const shared = sharedRows.map((row) => {
@@ -111,8 +136,12 @@ export async function listAccessibleMailboxes(db: AppDatabase, user: Pick<Sessio
 	return [...owned, ...shared];
 }
 
-export async function listAccessibleMailboxIds(db: AppDatabase, user: Pick<SessionUser, "id" | "email" | "role">) {
-	const rows = await listAccessibleMailboxes(db, user);
+export async function listAccessibleMailboxIds(
+	db: AppDatabase,
+	user: Pick<SessionUser, "id" | "email" | "role">,
+	orgId?: string,
+) {
+	const rows = await listAccessibleMailboxes(db, user, orgId);
 	return rows.map((row) => row.id);
 }
 

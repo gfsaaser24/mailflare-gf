@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { domains } from "@/db/schema";
 import {
@@ -131,13 +131,22 @@ function evaluate(
  *
  * last_checked_at and dns_ok are always refreshed, including on failure, so a
  * stale row stays distinguishable from a healthy one.
+ *
+ * `orgId` is the caller's organisation (`ctx.orgId`): a domain in another
+ * organisation is "Domain not found". Omit it only for the cross-organisation
+ * sweep in `reconcileAllDomains`.
  */
 export async function reconcileDomain(
 	env: CloudflareEnv,
 	domainId: string,
+	orgId?: string,
 ): Promise<DomainReconcileResult> {
 	const db = getDb(env);
-	const [row] = await db.select().from(domains).where(eq(domains.id, domainId)).limit(1);
+	const [row] = await db
+		.select()
+		.from(domains)
+		.where(and(eq(domains.id, domainId), ...(orgId ? [eq(domains.organizationId, orgId)] : [])))
+		.limit(1);
 	if (!row) throw new Error("Domain not found");
 
 	const lastCheckedAt = new Date();
@@ -171,7 +180,7 @@ export async function reconcileDomain(
 	await db
 		.update(domains)
 		.set({ status, statusReason, dnsOk, routingStatus, lastCheckedAt })
-		.where(eq(domains.id, row.id));
+		.where(and(eq(domains.id, row.id), eq(domains.organizationId, row.organizationId)));
 
 	return {
 		domainId: row.id,

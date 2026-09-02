@@ -1,20 +1,22 @@
 import { NextResponse } from "next/server";
+import { withOrg } from "@/lib/api/with-org";
 import { assertAdmin } from "@/lib/auth/admin";
-import { requireUser } from "@/lib/auth/cookies";
 import { getBranding, updateBranding } from "@/lib/branding/service";
 import { getEnv } from "@/lib/cloudflare";
 import { BRANDING_ICON_TYPES, isBrandingIcon, MAX_BRANDING_ICON_SIZE } from "./utils";
 
+// Branding lives in `app_settings`, which is instance-level: there is no
+// `organization_id` to scope. `withOrg` is used purely for authentication and
+// the suspended-organisation check; the admin check is unchanged.
 export async function GET() {
 	return NextResponse.json(await getBranding(getEnv()), {
 		headers: { "Cache-Control": "no-store" },
 	});
 }
 
-export async function PUT(request: Request) {
-	const env = getEnv();
+export const PUT = withOrg(async ({ env, user }, request) => {
 	try {
-		assertAdmin(await requireUser(env, request));
+		assertAdmin(user);
 	} catch {
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 	}
@@ -39,4 +41,4 @@ export async function PUT(request: Request) {
 		const message = error instanceof Error ? error.message : "Unable to update branding";
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
-}
+});

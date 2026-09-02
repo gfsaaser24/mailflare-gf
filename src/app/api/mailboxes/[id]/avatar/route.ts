@@ -1,9 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
 import { mailboxes } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import {
 	ALLOWED_AVATAR_TYPES,
@@ -13,18 +11,16 @@ import {
 import type { MailboxAvatarRouteParams } from "./types";
 import { mailboxAvatarKeyFor } from "./utils";
 
-export async function GET(request: Request, { params }: MailboxAvatarRouteParams) {
+export const GET = withOrg<MailboxAvatarRouteParams>(async (ctx, _request, { params }) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await requireUser(env, request);
-	const db = getDb(env);
-	const access = await getMailboxAccessLevel(db, user, id);
+	const { db, env, user, orgId, scoped } = ctx;
+	const access = await getMailboxAccessLevel(db, user, id, orgId);
 	if (!access?.canRead) return new Response("Not found", { status: 404 });
 
 	const [mailbox] = await db
 		.select({ avatarKey: mailboxes.avatarKey })
 		.from(mailboxes)
-		.where(eq(mailboxes.id, id))
+		.where(and(scoped(mailboxes), eq(mailboxes.id, id)))
 		.limit(1);
 	if (!mailbox?.avatarKey) return new Response("Not found", { status: 404 });
 
@@ -37,14 +33,12 @@ export async function GET(request: Request, { params }: MailboxAvatarRouteParams
 	headers.set("Content-Security-Policy", "default-src 'none'; img-src 'self'; sandbox");
 	headers.set("Cache-Control", "private, no-cache");
 	return new Response(object.body, { headers });
-}
+});
 
-export async function POST(request: Request, { params }: MailboxAvatarRouteParams) {
+export const POST = withOrg<MailboxAvatarRouteParams>(async (ctx, request, { params }) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await requireUser(env, request);
-	const db = getDb(env);
-	const access = await getMailboxAccessLevel(db, user, id);
+	const { db, env, user, orgId, scoped } = ctx;
+	const access = await getMailboxAccessLevel(db, user, id, orgId);
 	if (!access?.canManage) {
 		return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
 	}
@@ -70,6 +64,9 @@ export async function POST(request: Request, { params }: MailboxAvatarRouteParam
 	await env.BUCKET.put(key, await file.arrayBuffer(), {
 		httpMetadata: { contentType: file.type },
 	});
-	await db.update(mailboxes).set({ avatarKey: key }).where(eq(mailboxes.id, id));
+	await db
+		.update(mailboxes)
+		.set({ avatarKey: key })
+		.where(and(scoped(mailboxes), eq(mailboxes.id, id)));
 	return NextResponse.json({ ok: true });
-}
+});

@@ -24,6 +24,7 @@ export type AuditAction =
 	| "mailbox.access";
 
 export type AuditLogInput = {
+	organizationId?: string | null;
 	actorUserId?: string | null;
 	targetUserId?: string | null;
 	mailboxId?: string | null;

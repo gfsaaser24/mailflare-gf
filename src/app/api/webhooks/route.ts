@@ -1,27 +1,23 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { getEnv } from "@/lib/cloudflare";
-import { getDb } from "@/db";
 import { webhooks } from "@/db/schema";
-import { requireUser } from "@/lib/auth/cookies";
+import { withOrg } from "@/lib/api/with-org";
+import { RequestBodyTooLargeError } from "@/lib/http/errors";
+import { readJsonBody } from "@/lib/http/request";
 import { newId } from "@/lib/ids";
 import { webhookSchema } from "@/lib/validators";
-import { readJsonBody } from "@/lib/http/request";
-import { RequestBodyTooLargeError } from "@/lib/http/errors";
 
-export async function GET(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
-	const db = getDb(env);
-	const rows = await db.select().from(webhooks).where(eq(webhooks.userId, user.id));
+export const GET = withOrg(async ({ db, user, scoped }) => {
+	const rows = await db
+		.select()
+		.from(webhooks)
+		.where(and(scoped(webhooks), eq(webhooks.userId, user.id)));
 	return NextResponse.json({
 		webhooks: rows.map((w) => ({ id: w.id, url: w.url, events: w.events, enabled: w.enabled })),
 	});
-}
+});
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
+export const POST = withOrg(async ({ db, user, insertValues }, request) => {
 	let body: unknown;
 	try {
 		body = await readJsonBody(request, 16 * 1024);
@@ -35,16 +31,17 @@ export async function POST(request: Request) {
 	}
 
 	const secret = newId("whsec");
-	const db = getDb(env);
 	const id = newId("wh");
-	await db.insert(webhooks).values({
-		id,
-		userId: user.id,
-		url: parsed.data.url,
-		secret,
-		events: JSON.stringify(parsed.data.events),
-		enabled: true,
-	});
+	await db.insert(webhooks).values(
+		insertValues(webhooks, {
+			id,
+			userId: user.id,
+			url: parsed.data.url,
+			secret,
+			events: JSON.stringify(parsed.data.events),
+			enabled: true,
+		}),
+	);
 
 	return NextResponse.json({ id, url: parsed.data.url, secret, events: parsed.data.events });
-}
+});

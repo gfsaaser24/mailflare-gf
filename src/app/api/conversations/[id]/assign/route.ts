@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
+import { and, eq } from "drizzle-orm";
 import { users } from "@/db/schema";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { assignConversation } from "@/lib/conversations/service";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { readJsonBody } from "@/lib/http/request";
@@ -12,11 +10,9 @@ import { assignConversationSchema } from "@/lib/validators";
 import { requireConversationAccess, type ConversationRouteParams } from "../../access";
 
 /** `POST /api/conversations/[id]/assign` — `{ userId }`, or `{ userId: null }` to unassign. */
-export async function POST(request: Request, { params }: ConversationRouteParams) {
+export const POST = withOrg(async (ctx, request, { params }: ConversationRouteParams) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+	const { db, scoped } = ctx;
 
 	let body: unknown;
 	try {
@@ -30,13 +26,17 @@ export async function POST(request: Request, { params }: ConversationRouteParams
 		return NextResponse.json({ error: "Invalid assignment" }, { status: 400 });
 	}
 
-	const db = getDb(env);
-	const access = await requireConversationAccess(db, user, id, "send_on_behalf");
+	const access = await requireConversationAccess(ctx, id, "send_on_behalf");
 	if ("response" in access) return access.response;
 
 	const assigneeId = parsed.data.userId;
 	if (assigneeId) {
-		const [assignee] = await db.select().from(users).where(eq(users.id, assigneeId)).limit(1);
+		// An assignee outside the organisation does not exist as far as this route is concerned.
+		const [assignee] = await db
+			.select()
+			.from(users)
+			.where(and(scoped(users), eq(users.id, assigneeId)))
+			.limit(1);
 		if (!assignee || assignee.disabled) {
 			return NextResponse.json({ error: "User not found" }, { status: 404 });
 		}
@@ -45,6 +45,7 @@ export async function POST(request: Request, { params }: ConversationRouteParams
 			db,
 			assignee,
 			access.conversation.mailboxId,
+			ctx.orgId,
 		);
 		if (!assigneeAccess?.canRead) {
 			return NextResponse.json(
@@ -54,9 +55,9 @@ export async function POST(request: Request, { params }: ConversationRouteParams
 		}
 	}
 
-	const updated = await assignConversation(db, id, assigneeId);
+	const updated = await assignConversation(db, id, assigneeId, ctx.orgId);
 	if (!updated) {
 		return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
 	}
 	return NextResponse.json({ conversation: updated });
-}
+});

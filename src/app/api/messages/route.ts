@@ -2,22 +2,14 @@ import { NextResponse } from "next/server";
 // ilike: SQLite's LIKE was case-insensitive; Postgres' LIKE is not.
 import { eq, desc, and, ilike as like, or, count, isNull, inArray, lte, gt } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import { getEnv } from "@/lib/cloudflare";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getDb } from "@/db";
 import { messages } from "@/db/schema";
+import { withOrg } from "@/lib/api/with-org";
 import { getContactDisplayNameMap } from "@/lib/contacts/service";
 import { normalizeEmailAddress } from "@/lib/email/address";
 import { buildSnippet } from "@/lib/email/parse";
 import { getMailboxAccessLevel, listAccessibleMailboxes } from "@/lib/mailboxes/access";
 
-export async function GET(request: Request) {
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) {
-		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-	}
-
+export const GET = withOrg(async ({ env, db, user, orgId, scoped }, request) => {
 	const url = new URL(request.url);
 	const direction = url.searchParams.get("direction");
 	const mailboxId = url.searchParams.get("mailboxId");
@@ -31,12 +23,11 @@ export async function GET(request: Request) {
 	const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 100);
 	const offset = Math.max(Number(url.searchParams.get("offset") ?? 0), 0);
 
-	const db = getDb(env);
 	const accessibleMailboxes = await listAccessibleMailboxes(db, user);
 	const accessibleMailboxIds = accessibleMailboxes.map((mailbox) => mailbox.id);
 	const conditions: SQL[] = [];
 	if (mailboxId) {
-		const access = await getMailboxAccessLevel(db, user, mailboxId);
+		const access = await getMailboxAccessLevel(db, user, mailboxId, orgId);
 		if (!access?.canRead) {
 			return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
 		}
@@ -86,16 +77,18 @@ export async function GET(request: Request) {
 	if (title) {
 		conditions.push(like(messages.subject, `%${title}%`));
 	}
+	// `scoped(messages)` is repeated at both call sites: the org filter has to be
+	// visible inside each `.where(...)` (see eslint-rules/require-org-scope.js).
 	const where = and(...conditions);
 
 	const [totalRow] = await db
 		.select({ total: count() })
 		.from(messages)
-		.where(where);
+		.where(and(scoped(messages), where));
 	const rows = await db
 		.select()
 		.from(messages)
-		.where(where)
+		.where(and(scoped(messages), where))
 		.orderBy(desc(messages.createdAt))
 		.limit(limit)
 		.offset(offset);
@@ -134,4 +127,4 @@ export async function GET(request: Request) {
 	});
 
 	return NextResponse.json({ messages: enrichedRows, total: totalRow?.total ?? 0, limit, offset });
-}
+});

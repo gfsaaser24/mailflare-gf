@@ -14,4 +14,9 @@ export type SessionUser = {
 	canManageMailboxes: boolean;
 	createdByUserId: string | null;
 	createdAt: Date;
+	/**
+	 * Platform operator acting as this user, when the session was minted by
+	 * `/api/platform/orgs/[id]/impersonate` (T3.3). Absent or null otherwise.
+	 */
+	impersonatedByUserId?: string | null;
 };

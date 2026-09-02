@@ -156,6 +156,11 @@ function post(url: string, body: unknown, method = "POST"): Request {
 	});
 }
 
+/** Next always passes a route context, even for routes with no dynamic segment. */
+function listCtx() {
+	return { params: Promise.resolve({}) };
+}
+
 function routeParams(id: string) {
 	return { params: Promise.resolve({ id }) };
 }
@@ -193,7 +198,7 @@ describe.skipIf(!hasTestDatabase())("conversation API (T2.2)", () => {
 		const { GET } = await import("@/app/api/conversations/route");
 
 		await signIn(READER);
-		const readerResponse = await GET(get("/api/conversations"));
+		const readerResponse = await GET(get("/api/conversations"), listCtx());
 		expect(readerResponse.status).toBe(200);
 		const readerBody = (await readerResponse.json()) as {
 			conversations: Array<{ id: string; messageCount: number; lastMessage: unknown }>;
@@ -207,7 +212,7 @@ describe.skipIf(!hasTestDatabase())("conversation API (T2.2)", () => {
 		});
 
 		await signIn(OUTSIDER);
-		const outsiderResponse = await GET(get("/api/conversations"));
+		const outsiderResponse = await GET(get("/api/conversations"), listCtx());
 		const outsiderBody = (await outsiderResponse.json()) as { conversations: Array<{ id: string }> };
 		expect(outsiderBody.conversations.map((row) => row.id)).toEqual(["cnv_outsider"]);
 	});
@@ -232,29 +237,29 @@ describe.skipIf(!hasTestDatabase())("conversation API (T2.2)", () => {
 		const { GET } = await import("@/app/api/conversations/route");
 		await signIn(AGENT);
 
-		const byStatus = await GET(get("/api/conversations?status=closed"));
+		const byStatus = await GET(get("/api/conversations?status=closed"), listCtx());
 		expect(((await byStatus.json()) as { conversations: Array<{ id: string }> }).conversations
 			.map((row) => row.id)).toEqual(["cnv_closed"]);
 
-		const byAssignee = await GET(get(`/api/conversations?assignedUserId=${AGENT}`));
+		const byAssignee = await GET(get(`/api/conversations?assignedUserId=${AGENT}`), listCtx());
 		const assigneeBody = (await byAssignee.json()) as {
 			conversations: Array<{ id: string; assignee: { id: string; name: string } | null }>;
 		};
 		expect(assigneeBody.conversations.map((row) => row.id)).toEqual(["cnv_closed"]);
 		expect(assigneeBody.conversations[0].assignee).toEqual({ id: AGENT, name: "Agent" });
 
-		const unassigned = await GET(get("/api/conversations?assignedUserId=none"));
+		const unassigned = await GET(get("/api/conversations?assignedUserId=none"), listCtx());
 		expect(((await unassigned.json()) as { conversations: Array<{ id: string }> }).conversations
 			.map((row) => row.id)).toEqual(["cnv_open"]);
 
-		const byQuery = await GET(get("/api/conversations?q=refund"));
+		const byQuery = await GET(get("/api/conversations?q=refund"), listCtx());
 		expect(((await byQuery.json()) as { conversations: Array<{ id: string }> }).conversations
 			.map((row) => row.id)).toEqual(["cnv_open"]);
 
-		const scoped = await GET(get(`/api/conversations?mailboxId=${SHARED_MAILBOX}`));
+		const scoped = await GET(get(`/api/conversations?mailboxId=${SHARED_MAILBOX}`), listCtx());
 		expect(scoped.status).toBe(200);
 
-		const denied = await GET(get(`/api/conversations?mailboxId=${OUTSIDER_MAILBOX}`));
+		const denied = await GET(get(`/api/conversations?mailboxId=${OUTSIDER_MAILBOX}`), listCtx());
 		expect(denied.status).toBe(404);
 	});
 
@@ -270,7 +275,7 @@ describe.skipIf(!hasTestDatabase())("conversation API (T2.2)", () => {
 		const { GET } = await import("@/app/api/conversations/route");
 		await signIn(OWNER);
 
-		const first = await GET(get("/api/conversations?limit=2"));
+		const first = await GET(get("/api/conversations?limit=2"), listCtx());
 		const firstBody = (await first.json()) as {
 			conversations: Array<{ id: string }>;
 			nextCursor: string | null;
@@ -280,6 +285,7 @@ describe.skipIf(!hasTestDatabase())("conversation API (T2.2)", () => {
 
 		const second = await GET(
 			get(`/api/conversations?limit=2&cursor=${encodeURIComponent(firstBody.nextCursor!)}`),
+			listCtx(),
 		);
 		const secondBody = (await second.json()) as {
 			conversations: Array<{ id: string }>;

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { withOrg } from "@/lib/api/with-org";
+import { assertAdmin } from "@/lib/auth/admin";
 import { getExportConfigurationStatus } from "@/lib/backups/export";
 import {
 	createBackupRecord,
@@ -8,26 +10,17 @@ import {
 } from "@/lib/backups/service";
 import { startBackup } from "@/lib/backups/utils";
 import { reconcileStaleBackups } from "@/lib/backups/workflow";
-import { getEnv } from "@/lib/cloudflare";
-import { assertAdmin } from "@/lib/auth/admin";
-import { requireUser } from "@/lib/auth/cookies";
 import { parseBackupSettingsInput } from "./utils";
 
-async function requireAdmin(request: Request) {
-	const env = getEnv();
-	const user = await requireUser(env, request);
-	assertAdmin(user);
-	return { env, user };
-}
+// `backups`, `backup_settings` and `app_settings` are instance-level tables with
+// no `organization_id`. `withOrg` here is authentication plus the suspended-org
+// check only; the admin check is unchanged.
 
-export async function GET(request: Request) {
+export const GET = withOrg(async ({ env, user }) => {
 	try {
-		const { env } = await requireAdmin(request);
+		assertAdmin(user);
 		await reconcileStaleBackups(env);
-		const [settings, backupList] = await Promise.all([
-			getBackupSettings(env),
-			listBackups(env),
-		]);
+		const [settings, backupList] = await Promise.all([getBackupSettings(env), listBackups(env)]);
 		return NextResponse.json({
 			settings,
 			backups: backupList,
@@ -36,11 +29,11 @@ export async function GET(request: Request) {
 	} catch {
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 	}
-}
+});
 
-export async function PUT(request: Request) {
+export const PUT = withOrg(async ({ env, user }, request) => {
 	try {
-		const { env } = await requireAdmin(request);
+		assertAdmin(user);
 		const input = parseBackupSettingsInput(await request.json());
 		if (!input) return NextResponse.json({ error: "Invalid backup settings" }, { status: 400 });
 		await updateBackupSettings(env, input);
@@ -48,11 +41,11 @@ export async function PUT(request: Request) {
 	} catch {
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 	}
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withOrg(async ({ env, user }) => {
 	try {
-		const { env, user } = await requireAdmin(request);
+		assertAdmin(user);
 		const backupId = await createBackupRecord(env, "manual", user.id);
 		startBackup(env, backupId);
 		return NextResponse.json({ backupId }, { status: 202 });
@@ -60,4 +53,4 @@ export async function POST(request: Request) {
 		const message = error instanceof Error ? error.message : "Failed to start backup";
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
-}
+});

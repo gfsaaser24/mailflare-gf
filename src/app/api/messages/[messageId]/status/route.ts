@@ -1,30 +1,51 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getEnv } from "@/lib/cloudflare";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { updateMessageStatusForUser } from "@/lib/user";
+import { messages } from "@/db/schema";
+import { withOrg } from "@/lib/api/with-org";
+import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
+import { createAuditLog } from "@/lib/mailboxes/audit";
 import type { MessageStatusPayload } from "./types";
 import { isAllowedMessageStatus } from "./utils";
 
-export async function POST(
-	request: Request,
-	{ params }: { params: Promise<{ messageId: string }> },
-) {
-	const { messageId } = await params;
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) {
-		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-	}
+export const POST = withOrg(
+	async (
+		{ env, db, user, orgId, scoped },
+		request,
+		{ params }: { params: Promise<{ messageId: string }> },
+	) => {
+		const { messageId } = await params;
 
-	const payload = (await request.json()) as MessageStatusPayload;
-	if (!isAllowedMessageStatus(payload.status)) {
-		return NextResponse.json({ error: "Invalid message status" }, { status: 400 });
-	}
+		const payload = (await request.json()) as MessageStatusPayload;
+		if (!isAllowedMessageStatus(payload.status)) {
+			return NextResponse.json({ error: "Invalid message status" }, { status: 400 });
+		}
 
-	const success = await updateMessageStatusForUser(env, user, messageId, payload.status);
-	if (!success) {
-		return NextResponse.json({ error: "Message not found" }, { status: 404 });
-	}
+		const [message] = await db
+			.select({ id: messages.id, mailboxId: messages.mailboxId })
+			.from(messages)
+			.where(and(scoped(messages), eq(messages.id, messageId)))
+			.limit(1);
+		if (!message?.mailboxId) {
+			return NextResponse.json({ error: "Message not found" }, { status: 404 });
+		}
 
-	return NextResponse.json({ success: true });
-}
+		const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
+		if (!access?.canManage) {
+			return NextResponse.json({ error: "Message not found" }, { status: 404 });
+		}
+
+		await db
+			.update(messages)
+			.set({ status: payload.status })
+			.where(and(scoped(messages), eq(messages.id, messageId)));
+		await createAuditLog(env, {
+			actorUserId: user.id,
+			mailboxId: message.mailboxId,
+			messageId,
+			action: "email.delete",
+			metadata: { status: payload.status },
+		});
+
+		return NextResponse.json({ success: true });
+	},
+);

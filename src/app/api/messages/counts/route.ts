@@ -1,27 +1,18 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getDb } from "@/db";
 import { messages } from "@/db/schema";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withOrg } from "@/lib/api/with-org";
 import { buildMessageCounts } from "./utils";
 import { getMailboxAccessLevel, listAccessibleMailboxIds } from "@/lib/mailboxes/access";
 
-export async function GET(request: Request) {
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) {
-		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-	}
-
+export const GET = withOrg(async ({ db, user, orgId, scoped }, request) => {
 	const url = new URL(request.url);
 	const mailboxId = url.searchParams.get("mailboxId");
-	const db = getDb(env);
 	const conditions: SQL[] = [];
 
 	if (mailboxId) {
-		const access = await getMailboxAccessLevel(db, user, mailboxId);
+		const access = await getMailboxAccessLevel(db, user, mailboxId, orgId);
 		if (!access?.canRead) {
 			return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
 		}
@@ -46,7 +37,7 @@ export async function GET(request: Request) {
 			snoozedUntil: messages.snoozedUntil,
 		})
 		.from(messages)
-		.where(and(...conditions));
+		.where(and(scoped(messages), ...conditions));
 
 	return NextResponse.json({ counts: buildMessageCounts(rows) });
-}
+});

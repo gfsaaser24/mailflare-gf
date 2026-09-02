@@ -202,14 +202,27 @@ export async function touchConversation(
 		.where(eq(conversations.id, conversationId));
 }
 
+/**
+ * One conversation by id.
+ *
+ * Pass `orgId` (`ctx.orgId` from `withOrg`) from anything serving a request: a
+ * conversation in another organisation then reads as missing. It is optional
+ * only for the inbound/outbound threading paths, which run without a request.
+ */
 export async function getConversation(
 	db: AppDatabase,
 	conversationId: string,
+	orgId?: string,
 ): Promise<ConversationRow | null> {
 	const [row] = await db
 		.select()
 		.from(conversations)
-		.where(eq(conversations.id, conversationId))
+		.where(
+			and(
+				eq(conversations.id, conversationId),
+				...(orgId ? [eq(conversations.organizationId, orgId)] : []),
+			),
+		)
 		.limit(1);
 	return row ?? null;
 }
@@ -401,6 +414,8 @@ export type ConversationListItem = {
 };
 
 export type ListConversationsInput = {
+	/** The caller's organisation (`ctx.orgId` from `withOrg`). */
+	orgId: string;
 	/** The mailboxes the caller may read. An empty list yields an empty page. */
 	mailboxIds: string[];
 	status?: ConversationStatus | null;
@@ -425,7 +440,10 @@ export async function listConversations(
 	);
 	if (input.mailboxIds.length === 0) return { conversations: [], nextCursor: null, limit };
 
-	const conditions: SQL[] = [inArray(conversations.mailboxId, input.mailboxIds)];
+	const conditions: SQL[] = [
+		eq(conversations.organizationId, input.orgId),
+		inArray(conversations.mailboxId, input.mailboxIds),
+	];
 	if (input.status) conditions.push(eq(conversations.status, input.status));
 	if (input.assignedUserId === "none") {
 		conditions.push(isNull(conversations.assignedUserId));
@@ -566,6 +584,7 @@ export type ConversationDetail = Omit<ConversationListItem, "lastMessage"> & {
 export async function getConversationWithMessages(
 	db: AppDatabase,
 	conversationId: string,
+	orgId: string,
 ): Promise<ConversationDetail | null> {
 	const [row] = await db
 		.select({
@@ -581,7 +600,7 @@ export async function getConversationWithMessages(
 		})
 		.from(conversations)
 		.leftJoin(users, eq(users.id, conversations.assignedUserId))
-		.where(eq(conversations.id, conversationId))
+		.where(and(eq(conversations.id, conversationId), eq(conversations.organizationId, orgId)))
 		.limit(1);
 	if (!row) return null;
 
@@ -598,9 +617,11 @@ export async function getConversationWithMessages(
 				createdAt: messages.createdAt,
 			})
 			.from(messages)
-			.where(eq(messages.conversationId, conversationId))
+			.where(
+				and(eq(messages.conversationId, conversationId), eq(messages.organizationId, orgId)),
+			)
 			.orderBy(asc(messages.createdAt), asc(messages.id)),
-		listConversationNotes(db, conversationId),
+		listConversationNotes(db, conversationId, orgId),
 	]);
 
 	return {
@@ -633,11 +654,12 @@ export async function assignConversation(
 	db: AppDatabase,
 	conversationId: string,
 	userId: string | null,
+	orgId: string,
 ): Promise<ConversationRow | null> {
 	const [row] = await db
 		.update(conversations)
 		.set({ assignedUserId: userId })
-		.where(eq(conversations.id, conversationId))
+		.where(and(eq(conversations.id, conversationId), eq(conversations.organizationId, orgId)))
 		.returning();
 	return row ?? null;
 }
@@ -652,6 +674,7 @@ export async function updateConversationStatus(
 	db: AppDatabase,
 	conversationId: string,
 	update: ConversationStatusUpdate,
+	orgId: string,
 ): Promise<ConversationRow | null> {
 	const values: Partial<typeof conversations.$inferInsert> = {};
 	if (update.status !== undefined) values.status = update.status;
@@ -663,19 +686,26 @@ export async function updateConversationStatus(
 	if (update.status && update.status !== "snoozed" && update.snoozedUntil === undefined) {
 		values.snoozedUntil = null;
 	}
-	if (Object.keys(values).length === 0) return getConversation(db, conversationId);
+	if (Object.keys(values).length === 0) return getConversation(db, conversationId, orgId);
 
 	const [row] = await db
 		.update(conversations)
 		.set(values)
-		.where(eq(conversations.id, conversationId))
+		.where(and(eq(conversations.id, conversationId), eq(conversations.organizationId, orgId)))
 		.returning();
 	return row ?? null;
 }
 
+/**
+ * Notes on one conversation, oldest first.
+ *
+ * `conversation_notes` has no `organization_id`; it is scoped through the parent
+ * conversation, which is joined for exactly that reason.
+ */
 export async function listConversationNotes(
 	db: AppDatabase,
 	conversationId: string,
+	orgId: string,
 ): Promise<ConversationNote[]> {
 	const rows = await db
 		.select({
@@ -686,8 +716,14 @@ export async function listConversationNotes(
 			authorName: users.name,
 		})
 		.from(conversationNotes)
+		.innerJoin(conversations, eq(conversations.id, conversationNotes.conversationId))
 		.leftJoin(users, eq(users.id, conversationNotes.userId))
-		.where(eq(conversationNotes.conversationId, conversationId))
+		.where(
+			and(
+				eq(conversationNotes.conversationId, conversationId),
+				eq(conversations.organizationId, orgId),
+			),
+		)
 		.orderBy(asc(conversationNotes.createdAt), asc(conversationNotes.id));
 	return rows.map((row) => ({
 		id: row.id,
@@ -697,10 +733,13 @@ export async function listConversationNotes(
 	}));
 }
 
+/** Adds an internal note. Null when the conversation is not in `input.orgId`. */
 export async function addConversationNote(
 	db: AppDatabase,
-	input: { conversationId: string; userId: string | null; body: string },
-): Promise<ConversationNote> {
+	input: { conversationId: string; userId: string | null; body: string; orgId: string },
+): Promise<ConversationNote | null> {
+	const parent = await getConversation(db, input.conversationId, input.orgId);
+	if (!parent) return null;
 	const [row] = await db
 		.insert(conversationNotes)
 		.values({

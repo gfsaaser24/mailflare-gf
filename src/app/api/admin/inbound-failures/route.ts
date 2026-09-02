@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
+import { withOrg } from "@/lib/api/with-org";
 import { assertAdmin } from "@/lib/auth/admin";
-import { requireUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
 import { listInboundFailures } from "@/lib/inbound-failures/service";
 
-export async function GET(request: Request) {
-	const env = getEnv();
+// Inbound failures are an instance-level operations queue; `withOrg` supplies
+// authentication and the suspended-organisation check, `assertAdmin` the
+// permission check.
+export const GET = withOrg(async ({ env, user }, request) => {
 	try {
-		const user = await requireUser(env, request);
 		assertAdmin(user);
 		const includeResolved = new URL(request.url).searchParams.get("includeResolved") === "true";
 		const failures = await listInboundFailures(env, { includeResolved });
@@ -15,4 +15,4 @@ export async function GET(request: Request) {
 	} catch {
 		return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 	}
-}
+});

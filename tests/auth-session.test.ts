@@ -52,6 +52,9 @@ describe("session tokens are never valid bearer credentials", () => {
 	});
 });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const routeCtx = () => ({ params: Promise.resolve({}) }) as any;
+
 describe.skipIf(!hasTestDatabase())("login, register and /api/auth/me", () => {
 	beforeAll(() => {
 		// The route handlers build their env from process.env.
@@ -108,7 +111,7 @@ describe.skipIf(!hasTestDatabase())("login, register and /api/auth/me", () => {
 
 		cookieJar.clear();
 		const { GET } = await import("@/app/api/auth/me/route");
-		const response = await GET(bearer(token));
+		const response = await GET(bearer(token), routeCtx());
 
 		expect(response.status).toBe(401);
 	});
@@ -121,7 +124,7 @@ describe.skipIf(!hasTestDatabase())("login, register and /api/auth/me", () => {
 		cookieJar.clear();
 		cookieJar.set(SESSION_COOKIE, token);
 		const { GET } = await import("@/app/api/auth/me/route");
-		const response = await GET(new Request("http://localhost/api/auth/me"));
+		const response = await GET(new Request("http://localhost/api/auth/me"), routeCtx());
 
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { user?: { id?: string } };

@@ -227,12 +227,23 @@ export async function storeRawToR2(
 	return key;
 }
 
-export async function getMessageWithBody(env: CloudflareEnv, userId: string, messageId: string) {
+/**
+ * The message with its body, contact names and attachments.
+ *
+ * `orgId` is the caller's organisation (`ctx.orgId` from `withOrg`): a message
+ * that belongs to another organisation is treated as missing.
+ */
+export async function getMessageWithBody(
+	env: CloudflareEnv,
+	userId: string,
+	messageId: string,
+	orgId: string,
+) {
 	const db = getDb(env);
 	const [message] = await db
 		.select()
 		.from(messages)
-		.where(eq(messages.id, messageId))
+		.where(and(eq(messages.id, messageId), eq(messages.organizationId, orgId)))
 		.limit(1);
 	if (!message || message.userId !== userId) return null;
 	const contactNames = await getMessageContactNames(env, userId, message.fromAddr, message.toAddr);
@@ -241,11 +252,21 @@ export async function getMessageWithBody(env: CloudflareEnv, userId: string, mes
 	return { message: { ...message, ...contactNames }, body: message, attachments, unsubscribeUrl };
 }
 
-export async function getMessageWithBodyForUser(env: CloudflareEnv, user: SessionUser, messageId: string) {
+/** As `getMessageWithBody`, but authorised through the mailbox the message sits in. */
+export async function getMessageWithBodyForUser(
+	env: CloudflareEnv,
+	user: SessionUser,
+	messageId: string,
+	orgId: string,
+) {
 	const db = getDb(env);
-	const [message] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.organizationId, orgId)))
+		.limit(1);
 	if (!message?.mailboxId) return null;
-	const access = await getMailboxAccessLevel(db, user, message.mailboxId);
+	const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
 	if (!access?.canRead) return null;
 	const contactNames = await getMessageContactNames(env, message.userId, message.fromAddr, message.toAddr);
 	const attachments = await listMessageAttachments(env, messageId);
@@ -253,15 +274,21 @@ export async function getMessageWithBodyForUser(env: CloudflareEnv, user: Sessio
 	return { message: { ...message, ...contactNames }, body: message, attachments, unsubscribeUrl };
 }
 
-export async function getMessageMetadataForUser(env: CloudflareEnv, user: SessionUser, messageId: string) {
+/** Attachment list and unsubscribe link only, for the message detail pane. */
+export async function getMessageMetadataForUser(
+	env: CloudflareEnv,
+	user: SessionUser,
+	messageId: string,
+	orgId: string,
+) {
 	const db = getDb(env);
 	const [message] = await db
 		.select({ mailboxId: messages.mailboxId, rawR2Key: messages.rawR2Key })
 		.from(messages)
-		.where(eq(messages.id, messageId))
+		.where(and(eq(messages.id, messageId), eq(messages.organizationId, orgId)))
 		.limit(1);
 	if (!message?.mailboxId) return null;
-	const access = await getMailboxAccessLevel(db, user, message.mailboxId);
+	const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
 	if (!access?.canRead) return null;
 	const [attachments, unsubscribeUrl] = await Promise.all([
 		listMessageAttachments(env, messageId),

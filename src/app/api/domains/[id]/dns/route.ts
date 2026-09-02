@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
-import { getEnv } from "@/lib/cloudflare";
-import { requireUser } from "@/lib/auth/cookies";
+import { withOrg, type RouteContext } from "@/lib/api/with-org";
 import { getDomainDns, getDomainForUser } from "@/lib/domains/service";
 
-type Params = { params: Promise<{ id: string }> };
+type Params = RouteContext<{ id: string }>;
 
-export async function GET(request: Request, { params }: Params) {
+export const GET = withOrg<Params>(async ({ env, user, orgId }, _request, { params }) => {
 	const { id } = await params;
-	const env = getEnv();
-	const user = await requireUser(env, request);
-	const domain = await getDomainForUser(env, user.id, id);
+	const domain = await getDomainForUser(env, orgId, user.id, id);
 	if (!domain) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
 	try {
@@ -19,4 +16,4 @@ export async function GET(request: Request, { params }: Params) {
 		const message = err instanceof Error ? err.message : "Failed to fetch DNS";
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
-}
+});
