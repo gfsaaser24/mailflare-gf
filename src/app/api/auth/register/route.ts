@@ -8,7 +8,7 @@ import { hasAdminAccount } from "@/lib/auth/setup";
 import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { newId } from "@/lib/ids";
 import { firstRunRegisterSchema } from "@/lib/validators";
-import { addDomainForUser } from "@/lib/domains/service";
+import { attachOrProvisionDomainForUser } from "@/lib/domains/service";
 import { ensureEmailRoutingRuleToWorker } from "@/lib/cloudflare-api";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
 import { readJsonBody } from "@/lib/http/request";
@@ -59,7 +59,9 @@ export async function POST(request: Request) {
 	});
 
 	try {
-		const { domain } = await addDomainForUser(env, userId, domainName, {
+		// Setup (`POST /api/setup/domain`) already provisioned this hostname on
+		// Cloudflare. Reuse that work: attach the row, never provision twice.
+		const domain = await attachOrProvisionDomainForUser(env, userId, domainName, {
 			enableRouting: true,
 			enableSending: true,
 		});

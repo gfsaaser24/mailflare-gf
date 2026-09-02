@@ -3,6 +3,7 @@ import { getEnv } from "@/lib/cloudflare";
 import { requireUser } from "@/lib/auth/cookies";
 import { addDomainSchema } from "@/lib/validators";
 import { addDomainForUser, getDomainDns, listUserDomains } from "@/lib/domains/service";
+import { DomainProvisionError } from "@/lib/domains/provision";
 import { summariseDns, type DnsStatusSummary } from "@/lib/dns-status";
 
 export async function GET(request: NextRequest) {
@@ -50,6 +51,11 @@ export async function POST(request: Request) {
 		return NextResponse.json(result);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : "Failed to add domain";
+		if (err instanceof DomainProvisionError) {
+			// Cloudflare steps failed and were rolled back; the DB step is a client error.
+			const status = err.step === "db" || err.step === "zone-lookup" ? 400 : 502;
+			return NextResponse.json({ error: message, step: err.step }, { status });
+		}
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
 }

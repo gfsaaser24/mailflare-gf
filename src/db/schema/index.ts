@@ -175,6 +175,49 @@ export const apiKeys = pgTable("api_keys", {
 	lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
 });
 
+export const conversations = pgTable(
+	"conversations",
+	{
+		id: text("id").primaryKey(),
+		mailboxId: text("mailbox_id")
+			.notNull()
+			.references(() => mailboxes.id, { onDelete: "cascade" }),
+		// The subject as first seen, kept for display; `subjectNormalized` is what we match on.
+		subject: text("subject"),
+		subjectNormalized: text("subject_normalized").notNull().default(""),
+		lastMessageAt: timestamp("last_message_at", { withTimezone: true, mode: "date" }),
+		messageCount: integer("message_count").notNull().default(0),
+		assignedUserId: text("assigned_user_id").references(() => users.id, { onDelete: "set null" }),
+		status: text("status", { enum: ["open", "closed", "snoozed"] })
+			.notNull()
+			.default("open"),
+		snoozedUntil: timestamp("snoozed_until", { withTimezone: true, mode: "date" }),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+			.notNull()
+			.$defaultFn(() => new Date()),
+	},
+	(t) => [
+		index("conversations_mailbox_last_message_idx").on(t.mailboxId, t.lastMessageAt.desc()),
+		index("conversations_mailbox_subject_idx").on(t.mailboxId, t.subjectNormalized),
+	],
+);
+
+export const conversationNotes = pgTable(
+	"conversation_notes",
+	{
+		id: text("id").primaryKey(),
+		conversationId: text("conversation_id")
+			.notNull()
+			.references(() => conversations.id, { onDelete: "cascade" }),
+		userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+		body: text("body").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+			.notNull()
+			.$defaultFn(() => new Date()),
+	},
+	(t) => [index("conversation_notes_conversation_idx").on(t.conversationId, t.createdAt)],
+);
+
 export const messages = pgTable(
 	"messages",
 	{
@@ -198,12 +241,17 @@ export const messages = pgTable(
 		starred: boolean("starred").notNull().default(false),
 		snoozedUntil: timestamp("snoozed_until", { withTimezone: true, mode: "date" }),
 		threadId: text("thread_id"),
+		conversationId: text("conversation_id").references(() => conversations.id, { onDelete: "set null" }),
+		// RFC 5322 threading headers, verbatim (angle brackets included).
+		inReplyTo: text("in_reply_to"),
+		referencesHeader: text("references").array(),
 		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
 	(t) => [
 		index("messages_user_created_idx").on(t.userId, t.createdAt),
+		index("messages_conversation_idx").on(t.conversationId, t.createdAt),
 		index("messages_mailbox_idx").on(t.mailboxId),
 		index("messages_folder_idx").on(t.folderId),
 		// Inbound idempotency: the edge worker may retry the same message.
@@ -447,6 +495,8 @@ export const schema = {
 	contacts,
 	folders,
 	apiKeys,
+	conversations,
+	conversationNotes,
 	messages,
 	messageAttachments,
 	outboundJobs,

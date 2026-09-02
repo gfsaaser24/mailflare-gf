@@ -6,6 +6,12 @@ import { buildSnippet, parseRawMime } from "@/lib/email/parse";
 import { resolveInboundAddress, resolveInboxRuleDestination } from "@/lib/email/routing";
 import { dispatchWebhooks } from "@/lib/email/webhooks";
 import { getMessageContactNames, upsertContactFromAddress } from "@/lib/contacts/service";
+import {
+	deleteConversationIfEmpty,
+	parseMessageIdList,
+	resolveConversationForInbound,
+	touchConversation,
+} from "@/lib/conversations/service";
 import { formatEmailAddress, getEmailAddress } from "@/lib/email/address";
 import { sendMailboxAutoReply } from "@/lib/email/auto-reply";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
@@ -95,6 +101,18 @@ export async function processInboundMessage(
 		source: "inbound",
 	});
 
+	const receivedAt = parsed.date ?? new Date();
+	const references = mergeReferences(parsed.references, parsed.inReplyTo);
+	const conversation = await resolveConversationForInbound(db, {
+		mailboxId: decision.mailbox.mailboxId,
+		subject: parsed.subject,
+		fromAddr,
+		toAddr,
+		referencedMessageIds: references,
+		mailboxAddress: deliveredAddress,
+		receivedAt,
+	});
+
 	try {
 		await db.insert(messages).values({
 			id: messageId,
@@ -112,15 +130,21 @@ export async function processInboundMessage(
 			rawR2Key: payload.rawR2Key,
 			status: destination.status,
 			threadId: parsed.messageId,
+			conversationId: conversation.id,
+			inReplyTo: parsed.inReplyTo,
+			referencesHeader: references.length ? references : null,
 		});
 	} catch (error) {
 		// Lost the race against a concurrent delivery of the same message: it is stored.
 		if (isUniqueViolation(error)) {
+			await deleteConversationIfEmpty(db, conversation.id);
 			await discardDuplicateRaw(env, payload.rawR2Key);
 			return;
 		}
 		throw error;
 	}
+
+	await touchConversation(db, conversation.id, receivedAt);
 
 	try {
 		await storeMessageAttachments(env, messageId, parsed.attachments, { validate: false });
@@ -163,6 +187,12 @@ export async function processInboundMessage(
 		to: toAddr,
 		subject: parsed.subject,
 	});
+}
+
+/** In-Reply-To first, then References: the order a threading client walks them. */
+function mergeReferences(references: string[], inReplyTo: string | null): string[] {
+	const fromInReplyTo = parseMessageIdList(inReplyTo);
+	return [...new Set([...fromInReplyTo, ...references])];
 }
 
 /** Postgres unique_violation, raised by the partial index on (mailbox_id, provider_message_id). */

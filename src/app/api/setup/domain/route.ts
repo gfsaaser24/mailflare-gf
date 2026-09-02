@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { hasAdminAccount } from "@/lib/auth/setup";
 import { getEnv } from "@/lib/cloudflare";
-import { provisionDomainOnCloudflare } from "@/lib/domains/provision";
+import { provisionDomain } from "@/lib/domains/provision";
+import { getDomainDns } from "@/lib/domains/service";
 import { getPrimaryDomain } from "@/lib/user";
 import { setupDomainSchema } from "@/lib/validators";
 import { readJsonBody } from "@/lib/http/request";
@@ -31,9 +32,14 @@ export async function POST(request: Request) {
 	}
 
 	try {
-		const provisioned = await provisionDomainOnCloudflare(env, parsed.data.hostname, {
+		const provisioned = await provisionDomain(env, {
+			hostname: parsed.data.hostname,
 			enableRouting: true,
 			enableSending: true,
+		});
+		const dns = await getDomainDns(env, {
+			zoneId: provisioned.zone.id,
+			sendingSubdomainTag: provisioned.sendingSubdomainTag,
 		});
 		return NextResponse.json({
 			domain: {
@@ -42,6 +48,7 @@ export async function POST(request: Request) {
 				routingEnabled: provisioned.routingEnabled,
 				sendingEnabled: provisioned.sendingEnabled,
 			},
+			dns,
 		});
 	} catch (err) {
 		const message = err instanceof Error ? err.message : "Domain setup failed";

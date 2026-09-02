@@ -2,7 +2,6 @@ import { eq, and } from "drizzle-orm";
 import { getDb } from "@/db";
 import { domains, mailboxes } from "@/db/schema";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
-import { newId } from "@/lib/ids";
 import {
 	disableEmailRouting,
 	getEmailRoutingDns,
@@ -12,7 +11,8 @@ import {
 	type CfDnsRecord,
 } from "@/lib/cloudflare-api";
 import { deleteEmailRoutingRulesForDomain } from "@/lib/domains/cloudflare-cleanup";
-import { provisionDomainOnCloudflare } from "@/lib/domains/provision";
+import { provisionDomain } from "@/lib/domains/provision";
+import type { DomainRow } from "@/lib/domains/types";
 
 export type DomainDnsView = {
 	routing: { records: CfDnsRecord[]; missing: CfDnsRecord[]; status?: string };
@@ -29,34 +29,53 @@ export async function addDomainForUser(
 	userId: string,
 	hostname: string,
 	options?: { enableRouting?: boolean; enableSending?: boolean },
-): Promise<{ domain: typeof domains.$inferSelect; dns: DomainDnsView }> {
-	const provisioned = await provisionDomainOnCloudflare(env, hostname, options);
-
-	const db = getDb(env);
-	const [existing] = await db.select().from(domains).where(eq(domains.hostname, provisioned.hostname)).limit(1);
-	if (existing && existing.userId !== userId) {
-		throw new Error("Domain is already registered");
-	}
-
-	const domainId = existing?.id ?? newId("dom");
-	const values = {
-		id: domainId,
+): Promise<{ domain: DomainRow; dns: DomainDnsView }> {
+	const { domain } = await provisionDomain(env, {
+		hostname,
 		userId,
-		hostname: provisioned.hostname,
-		zoneId: provisioned.zone.id,
-		status: provisioned.routingEnabled || provisioned.sendingEnabled ? ("active" as const) : ("pending" as const),
-		routingStatus: provisioned.routingStatus ?? null,
-		sendingSubdomainTag: provisioned.sendingSubdomainTag,
-		sendingEnabled: provisioned.sendingEnabled,
-		routingEnabled: provisioned.routingEnabled,
-	};
+		enableRouting: options?.enableRouting,
+		enableSending: options?.enableSending,
+	});
+	// `userId` was given, so a row is always returned.
+	const row = domain!;
+
+	await syncAliasMailboxRouting(env, userId);
+
+	const dns = await getDomainDns(env, row);
+	return { domain: row, dns };
+}
+
+/**
+ * First-run helper: the domain may already have been provisioned by
+ * `POST /api/setup/domain` before any user existed. Attach that row to the new
+ * admin instead of provisioning the same hostname a second time.
+ */
+export async function attachOrProvisionDomainForUser(
+	env: CloudflareEnv,
+	userId: string,
+	hostname: string,
+	options?: { enableRouting?: boolean; enableSending?: boolean },
+): Promise<DomainRow> {
+	const normalized = hostname.toLowerCase().trim();
+	const db = getDb(env);
+	const [existing] = await db.select().from(domains).where(eq(domains.hostname, normalized)).limit(1);
 
 	if (existing) {
-		await db.update(domains).set(values).where(eq(domains.id, domainId));
-	} else {
-		await db.insert(domains).values(values);
+		if (existing.userId !== userId) {
+			await db.update(domains).set({ userId }).where(eq(domains.id, existing.id));
+		}
+		await syncAliasMailboxRouting(env, userId);
+		const [row] = await db.select().from(domains).where(eq(domains.id, existing.id)).limit(1);
+		return row!;
 	}
 
+	const { domain } = await addDomainForUser(env, userId, normalized, options);
+	return domain;
+}
+
+/** Re-points every "all domains" alias mailbox of this user at current routing. */
+async function syncAliasMailboxRouting(env: CloudflareEnv, userId: string): Promise<void> {
+	const db = getDb(env);
 	const aliasMailboxes = await db
 		.select({ id: mailboxes.id, domainId: mailboxes.domainId, localPart: mailboxes.localPart, useAllDomains: mailboxes.useAllDomains })
 		.from(mailboxes)
@@ -68,15 +87,11 @@ export async function addDomainForUser(
 	for (const result of routingResults) {
 		if (result.status === "rejected") console.warn("ensureMailboxDomainRouting", result.reason);
 	}
-
-	const [domain] = await db.select().from(domains).where(eq(domains.id, domainId)).limit(1);
-	const dns = await getDomainDns(env, domain!);
-	return { domain: domain!, dns };
 }
 
 export async function getDomainDns(
 	env: CloudflareEnv,
-	domain: typeof domains.$inferSelect,
+	domain: Pick<DomainRow, "zoneId" | "sendingSubdomainTag">,
 ): Promise<DomainDnsView> {
 	const routingDns = await getEmailRoutingDns(env, domain.zoneId);
 	const routingSettings = await getEmailRoutingSettings(env, domain.zoneId);

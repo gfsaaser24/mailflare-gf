@@ -5,6 +5,7 @@ import { newId } from "@/lib/ids";
 import { buildSnippet } from "@/lib/email/parse";
 import { dispatchWebhooks } from "@/lib/email/webhooks";
 import { upsertContactFromAddress } from "@/lib/contacts/service";
+import { resolveConversationForOutbound, touchConversation } from "@/lib/conversations/service";
 import { getAuthorizedSenderAddress } from "@/lib/email/sender";
 import { createAuditLog } from "@/lib/mailboxes/audit";
 import { storeMessageAttachments, validateAttachments } from "@/lib/email/attachments";
@@ -20,6 +21,8 @@ export type SendEmailInput = {
 	headers?: Record<string, string>;
 	mailboxId: string;
 	attachments?: AttachmentContent[];
+	/** The stored message this send replies to, when the caller knows it. */
+	replyToMessageId?: string | null;
 };
 
 export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Promise<{ messageId: string }> {
@@ -34,6 +37,21 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 	});
 	const messageId = newId("msg");
 	const snippet = buildSnippet(input.text ?? null, input.html ?? null);
+	const sentAt = new Date();
+	const thread = await resolveConversationForOutbound(db, {
+		mailboxId: sender.mailboxId,
+		subject: input.subject,
+		fromAddr: sender.fromAddr,
+		toAddr: input.to,
+		replyToMessageId: input.replyToMessageId ?? null,
+		sentAt,
+	});
+	// Threading headers the caller set explicitly always win.
+	const headers: Record<string, string> = { ...input.headers };
+	if (thread.inReplyTo && !hasHeader(headers, "in-reply-to")) headers["In-Reply-To"] = thread.inReplyTo;
+	if (thread.references.length && !hasHeader(headers, "references")) {
+		headers.References = thread.references.join(" ");
+	}
 
 	await db.insert(messages).values({
 		id: messageId,
@@ -47,6 +65,9 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		textBody: input.text ?? null,
 		htmlBody: input.html ?? null,
 		status: "queued",
+		conversationId: thread.conversation.id,
+		inReplyTo: headers["In-Reply-To"] ?? thread.inReplyTo,
+		referencesHeader: thread.references.length ? thread.references : null,
 	});
 	try {
 		await storeMessageAttachments(env, messageId, attachments);
@@ -54,6 +75,7 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		await db.delete(messages).where(eq(messages.id, messageId));
 		throw error;
 	}
+	await touchConversation(db, thread.conversation.id, sentAt);
 
 	const jobId = newId("job");
 	await db.insert(outboundJobs).values({
@@ -63,6 +85,7 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		status: "queued",
 		payload: JSON.stringify({
 			...input,
+			headers: Object.keys(headers).length ? headers : undefined,
 			from: sender.fromAddr,
 			mailboxId: sender.mailboxId,
 			attachments: attachments.map(({ content: _content, ...attachment }) => attachment),
@@ -74,7 +97,7 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 			from: sender.fromAddr,
 			to: input.to,
 			subject: input.subject,
-			headers: input.headers,
+			headers: Object.keys(headers).length ? headers : undefined,
 			html: input.html,
 			text: input.text,
 			attachments: attachments.map((attachment) =>
@@ -125,4 +148,9 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		await dispatchWebhooks(env, input.userId, "message.failed", { messageId, error });
 		throw err;
 	}
+}
+
+/** Case-insensitive header presence check; RFC 5322 header names are case-insensitive. */
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+	return Object.keys(headers).some((key) => key.toLowerCase() === name);
 }

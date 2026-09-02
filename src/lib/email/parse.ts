@@ -3,6 +3,7 @@ import { formatPostalAddress, formatPostalAddressList } from "@/lib/email/addres
 import { normalizeAttachmentContent } from "@/lib/email/attachments";
 import { getLatestEmailContent, htmlToReadableText } from "@/lib/email/reply-content-utils";
 import { sanitizeEmailHtml } from "@/lib/email/sanitize";
+import { parseMessageIdList } from "@/lib/conversations/service";
 import type { AttachmentContent } from "@/lib/email/attachment-types";
 
 export type ParsedEmail = {
@@ -10,6 +11,10 @@ export type ParsedEmail = {
 	text: string | null;
 	html: string | null;
 	messageId: string | null;
+	/** Raw `In-Reply-To` header value, or null when absent. */
+	inReplyTo: string | null;
+	/** `References` header, split into individual `<message-id>` tokens. */
+	references: string[];
 	fromAddr: string | null;
 	toAddr: string | null;
 	date: Date | null;
@@ -27,6 +32,8 @@ export async function parseRawMime(raw: ArrayBuffer): Promise<ParsedEmail> {
 		// verbatim in object storage.
 		html: sanitizeEmailHtml(stripNul(email.html)),
 		messageId: email.messageId ?? null,
+		inReplyTo: stripNul(email.inReplyTo) ?? null,
+		references: parseMessageIdList(stripNul(email.references)),
 		fromAddr: formatPostalAddress(email.from, null),
 		toAddr: formatPostalAddressList(email.to, null),
 		date: date && !Number.isNaN(date.getTime()) ? date : null,
