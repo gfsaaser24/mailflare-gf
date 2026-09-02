@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { authFetch, getClientSessionToken } from "@/lib/auth/client";
+import { authFetch, hasClientSession } from "@/lib/auth/client";
 import { getHomeActions, heroMessages, sidebarItems } from "./utils";
 import { ArrowRight, Inbox, Mail, Search, ShieldCheck } from "lucide-react";
 import { useBranding } from "@/components/branding-provider";
@@ -14,7 +14,7 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!getClientSessionToken()) return;
+    if (!hasClientSession()) return;
 
     authFetch("/api/auth/me", { redirectOnUnauthorized: false })
       .then((response) => {

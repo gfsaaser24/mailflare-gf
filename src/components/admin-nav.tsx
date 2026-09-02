@@ -5,6 +5,7 @@ import {
   Globe2,
   Activity,
   Mail,
+  MailWarning,
   Settings,
   Palette,
   Users,
@@ -33,6 +34,7 @@ const sections = [
       { href: "/accounts", label: "Accounts", icon: Users },
       { href: "/activity", label: "Activity", icon: Activity },
       { href: "/backups", label: "Backups", icon: DatabaseBackup },
+      { href: "/inbound-failures", label: "Inbound Failures", icon: MailWarning },
     ],
   },
   {

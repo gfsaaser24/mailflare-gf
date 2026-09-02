@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { messageAttachments, messages } from "@/db/schema";
 import { newId } from "@/lib/ids";
@@ -162,4 +162,64 @@ export async function getAttachmentForUser(
 	const object = await env.BUCKET.get(attachment.r2Key);
 	if (!object) return null;
 	return { attachment, object };
+}
+
+/** Chunk size for `IN (...)` lookups so we never build an unbounded statement. */
+const ATTACHMENT_LOOKUP_CHUNK = 200;
+
+function chunk<T>(items: T[], size: number): T[][] {
+	const chunks: T[][] = [];
+	for (let index = 0; index < items.length; index += size) {
+		chunks.push(items.slice(index, index + size));
+	}
+	return chunks;
+}
+
+/**
+ * Collects every stored attachment key for the given messages.
+ * Does not touch the database rows; those cascade with their message.
+ */
+export async function listAttachmentKeysForMessages(
+	env: CloudflareEnv,
+	messageIds: string[],
+): Promise<string[]> {
+	if (messageIds.length === 0) return [];
+	const db = getDb(env);
+	const keys: string[] = [];
+
+	for (const ids of chunk(messageIds, ATTACHMENT_LOOKUP_CHUNK)) {
+		const rows = await db
+			.select({ r2Key: messageAttachments.r2Key })
+			.from(messageAttachments)
+			.where(inArray(messageAttachments.messageId, ids));
+		for (const row of rows) keys.push(row.r2Key);
+	}
+
+	return keys;
+}
+
+/**
+ * Best-effort bulk removal of the stored objects for the given messages.
+ * Failures are logged and counted, never thrown: storage cleanup must not block
+ * the database work that follows it. Attachment rows are left to cascade.
+ */
+export async function deleteAttachmentsForMessages(
+	env: CloudflareEnv,
+	messageIds: string[],
+): Promise<{ deleted: number; failed: number }> {
+	const keys = await listAttachmentKeysForMessages(env, messageIds);
+	let deleted = 0;
+	let failed = 0;
+
+	for (const key of keys) {
+		try {
+			await env.BUCKET.delete(key);
+			deleted += 1;
+		} catch (error) {
+			failed += 1;
+			console.error("deleteAttachmentsForMessages", key, error);
+		}
+	}
+
+	return { deleted, failed };
 }

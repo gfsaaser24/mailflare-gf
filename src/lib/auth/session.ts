@@ -4,10 +4,21 @@ import { getDb } from "@/db";
 import { sessions, users } from "@/db/schema";
 
 export const SESSION_COOKIE = "ep_session";
+/**
+ * Session tokens are minted as `sess_<nanoid>`. API keys use the `ep_` prefix
+ * (`KEY_PREFIX` in `src/lib/api-keys.ts`), so the two namespaces never overlap
+ * and a session token can be recognised (and refused) on the bearer path.
+ */
+export const SESSION_TOKEN_PREFIX = "sess_";
 const SESSION_DAYS = 30;
 
 export function generateSessionToken(): string {
 	return newId("sess");
+}
+
+/** True when the value looks like a session token rather than an API key. */
+export function isSessionToken(value: string): boolean {
+	return value.startsWith(SESSION_TOKEN_PREFIX);
 }
 
 export async function hashSessionToken(token: string): Promise<string> {

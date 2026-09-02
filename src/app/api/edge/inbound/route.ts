@@ -5,7 +5,7 @@ import { getEnv } from "@/lib/cloudflare";
 import { getAccountForwardingDestination, hasTrustedForwardedFlag } from "@/lib/email/account-forwarding";
 import { processInboundMessage, storeRawToR2 } from "@/lib/email/inbound";
 import { resolveInboundAddress } from "@/lib/email/routing";
-import { createAuditLog } from "@/lib/mailboxes/audit";
+import { recordInboundFailure } from "@/lib/inbound-failures/service";
 
 /**
  * Inbound mail relayed by the thin Cloudflare edge worker (cloudflare-worker/).
@@ -36,14 +36,15 @@ export async function POST(request: Request) {
 		await processInboundMessage(env, { from, to, rawR2Key, headers });
 	} catch (error) {
 		// The raw message is already stored, so never bounce here. Record the failure
-		// in the audit log (keyed by the raw object) so it can be found and reprocessed.
+		// (keyed by the raw object) so an admin can retry it from /inbound-failures.
 		console.error(`Inbound processing failed for ${to} (raw ${rawR2Key})`, error);
-		await createAuditLog(env, {
-			actorUserId: null,
+		await recordInboundFailure(env, {
+			rawR2Key,
 			mailboxId: decision.mailbox.mailboxId,
-			action: "email.inbound_failed",
-			metadata: { rawR2Key, from, to, error: error instanceof Error ? error.message : String(error) },
-		}).catch((auditError) => console.error("Could not record inbound failure", auditError));
+			fromAddr: from,
+			toAddr: to,
+			error,
+		}).catch((recordError) => console.error("Could not record inbound failure", recordError));
 	}
 
 	let forwardTo: string | undefined;

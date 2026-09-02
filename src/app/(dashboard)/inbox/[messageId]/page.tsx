@@ -26,6 +26,7 @@ import {
 } from "./utils";
 import { extractCloudAttachments } from "./cloud-attachment-utils";
 import { sanitizeEmailHtml } from "./email-html-sanitizer";
+import { MessageBodyFrame } from "./message-body-frame";
 
 export default function MessageDetailPage() {
   const params = useParams<{ messageId: string }>();
@@ -170,7 +171,7 @@ export default function MessageDetailPage() {
         </div>
         <div className="prose max-w-none text-neutral-900">
           {htmlBody ? (
-            <div className="mx-auto" dangerouslySetInnerHTML={{ __html: htmlBody }} />
+            <MessageBodyFrame html={htmlBody} />
           ) : (
             <pre className="whitespace-pre-wrap text-sm text mx-auto">
               {cloudAttachmentResult.content}

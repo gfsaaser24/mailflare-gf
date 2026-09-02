@@ -1,19 +1,21 @@
-import { authFetch, getClientSessionToken } from "@/lib/auth/client";
+import { authFetch, hasClientSession } from "@/lib/auth/client";
 import type { MailboxOption } from "./mailbox-provider";
 
 let mailboxesCache: MailboxOption[] | null = null;
-let mailboxesCacheSessionToken: string | null = null;
+// The session token is no longer readable (httpOnly cookie); the cache is keyed
+// on whether a session exists, which is what it actually needed to detect.
+let mailboxesCacheSession: boolean | null = null;
 let mailboxesRequest: Promise<MailboxOption[]> | null = null;
-let mailboxesRequestSessionToken: string | null = null;
+let mailboxesRequestSession: boolean | null = null;
 let cacheGeneration = 0;
 export const SELECTED_MAILBOX_STORAGE_KEY = "selected-mailbox-id";
 
 export function clearMailboxesCache() {
 	cacheGeneration += 1;
 	mailboxesCache = null;
-	mailboxesCacheSessionToken = null;
+	mailboxesCacheSession = null;
 	mailboxesRequest = null;
-	mailboxesRequestSessionToken = null;
+	mailboxesRequestSession = null;
 }
 
 export function clearMailboxClientState() {
@@ -24,12 +26,12 @@ export function clearMailboxClientState() {
 }
 
 export async function fetchMailboxOptions(force = false): Promise<MailboxOption[]> {
-	const sessionToken = getClientSessionToken();
-	if (!force && mailboxesCache && mailboxesCacheSessionToken === sessionToken) return mailboxesCache;
-	if (!force && mailboxesRequest && mailboxesRequestSessionToken === sessionToken) return mailboxesRequest;
+	const session = hasClientSession();
+	if (!force && mailboxesCache && mailboxesCacheSession === session) return mailboxesCache;
+	if (!force && mailboxesRequest && mailboxesRequestSession === session) return mailboxesRequest;
 
 	const requestGeneration = cacheGeneration;
-	mailboxesRequestSessionToken = sessionToken;
+	mailboxesRequestSession = session;
 	mailboxesRequest = authFetch("/api/mailboxes")
 		.then((res) => res.json())
 		.then((data) => {
@@ -50,14 +52,14 @@ export async function fetchMailboxOptions(force = false): Promise<MailboxOption[
 			}));
 			if (requestGeneration === cacheGeneration) {
 				mailboxesCache = items;
-				mailboxesCacheSessionToken = sessionToken;
+				mailboxesCacheSession = session;
 			}
 			return items;
 		})
 		.finally(() => {
 			if (requestGeneration === cacheGeneration) {
 				mailboxesRequest = null;
-				mailboxesRequestSessionToken = null;
+				mailboxesRequestSession = null;
 			}
 		});
 

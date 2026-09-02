@@ -5,6 +5,7 @@ import { mailboxes, users } from "@/db/schema";
 import { requireUser } from "@/lib/auth/cookies";
 import { getEnv } from "@/lib/cloudflare";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
+import { deleteMailbox, MailboxCloudflareCleanupError } from "@/lib/mailboxes/delete";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
 import { updateMailboxSchema } from "@/lib/validators";
 import type { MailboxRouteParams } from "./types";
@@ -105,6 +106,30 @@ export async function DELETE(request: Request, { params }: MailboxRouteParams) {
 		allowed = mailbox.userId === user.id || owner?.createdByUserId === user.id;
 	}
 	if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-	await db.delete(mailboxes).where(eq(mailboxes.id, id));
-	return NextResponse.json({ ok: true });
+
+	try {
+		const counts = await deleteMailbox(
+			env,
+			db,
+			{
+				id: mailbox.id,
+				userId: mailbox.userId,
+				domainId: mailbox.domainId,
+				localPart: mailbox.localPart,
+				useAllDomains: mailbox.useAllDomains,
+				avatarKey: mailbox.avatarKey,
+			},
+			{ actorUserId: user.id },
+		);
+		return NextResponse.json({ ok: true, deleted: counts });
+	} catch (error) {
+		if (error instanceof MailboxCloudflareCleanupError) {
+			console.error("deleteMailbox: cloudflare cleanup failed", error);
+			return NextResponse.json(
+				{ error: `Cloudflare cleanup failed: ${error.message}` },
+				{ status: 502 },
+			);
+		}
+		throw error;
+	}
 }

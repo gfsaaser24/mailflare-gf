@@ -80,7 +80,8 @@ export async function POST(request: Request) {
 	}
 
 	const token = await createSession(env, userId);
-	const response = NextResponse.json({ ok: true, token, redirect: "/inbox" });
+	// The token goes into the httpOnly cookie only; never into the body.
+	const response = NextResponse.json({ ok: true, redirect: "/inbox" });
 	response.headers.set("Cache-Control", "no-store");
 	response.cookies.set(SESSION_COOKIE, token, {
 		httpOnly: true,

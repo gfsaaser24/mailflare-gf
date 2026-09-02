@@ -19,7 +19,7 @@ import {
 export async function GET(request: Request) {
 	const access = await requireTeamAdmin(request);
 	if (access.error) return access.error;
-	const rows = await listAccountsForAdmin(getDb(access.env));
+	const rows = await listAccountsForAdmin(getDb(access.env), access.user!.id);
 	return NextResponse.json({
 		accounts: rows.map((row) => accountListItemFromUser(row)),
 	});

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { webhookDeliveries, webhooks } from "@/db/schema";
 import { newId } from "@/lib/ids";
+import { sanitizeHtmlFields } from "@/lib/email/sanitize";
 
 export type WebhookEventType = "message.inbound" | "message.outbound" | "message.failed";
 
@@ -14,6 +15,10 @@ export async function dispatchWebhooks(
 	const db = getDb(env);
 	const hooks = await db.select().from(webhooks).where(eq(webhooks.userId, userId));
 
+	// Webhook consumers render whatever we hand them, so any HTML in the
+	// payload goes out sanitised; everything else is plain text.
+	const safePayload = sanitizeHtmlFields(payload);
+
 	for (const hook of hooks) {
 		if (!hook.enabled) continue;
 		let events: string[] = [];
@@ -25,7 +30,7 @@ export async function dispatchWebhooks(
 		if (!events.includes(eventType)) continue;
 
 		const deliveryId = newId();
-		const body = JSON.stringify({ type: eventType, data: payload });
+		const body = JSON.stringify({ type: eventType, data: safePayload });
 		await db.insert(webhookDeliveries).values({
 			id: deliveryId,
 			webhookId: hook.id,

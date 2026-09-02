@@ -3,12 +3,13 @@ import { Readable, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import type { ImapImportInput } from "./imap-types";
 import {
-	assertSafeImapHost,
 	getLiteralLength,
 	isTaggedCompletion,
 	parseListMailboxName,
 	parseSearchUids,
 	quoteImapString,
+	resolveSafeImapHost,
+	isIpLiteral,
 } from "./imap-utils";
 import type { ImportMessageInput } from "./types";
 
@@ -41,17 +42,31 @@ function applySocketTimeout(socket: NetSocket): void {
 	});
 }
 
+/**
+ * Connects to `address`, the value already vetted by `resolveSafeImapHost`, never to the
+ * hostname: re-resolving here would let DNS hand back a private address after the check.
+ * `hostname` is only used for TLS SNI and certificate validation.
+ */
 async function connectImapSocket(input: {
 	hostname: string;
+	address: string;
+	family: 4 | 6;
 	port: number;
 	secure: boolean;
 }): Promise<ImapSocket> {
 	return new Promise((resolve, reject) => {
 		const onError = (error: Error) => reject(error);
+		// SNI must be a name; an IP literal there is rejected by TLS.
+		const servername = isIpLiteral(input.hostname) ? undefined : input.hostname;
 
 		if (input.secure) {
 			const socket = tlsConnect(
-				{ host: input.hostname, port: input.port },
+				// No `family` here: `host` is already a literal IP, so TLS does no DNS.
+				{
+					host: input.address,
+					port: input.port,
+					...(servername ? { servername } : {}),
+				},
 				() => {
 					socket.off("error", onError);
 					resolve(toImapSocket(socket));
@@ -62,10 +77,13 @@ async function connectImapSocket(input: {
 			return;
 		}
 
-		const socket = netConnect({ host: input.hostname, port: input.port }, () => {
-			socket.off("error", onError);
-			resolve(toImapSocket(socket));
-		});
+		const socket = netConnect(
+			{ host: input.address, port: input.port, family: input.family },
+			() => {
+				socket.off("error", onError);
+				resolve(toImapSocket(socket));
+			},
+		);
 		applySocketTimeout(socket);
 		socket.once("error", onError);
 	});
@@ -190,9 +208,11 @@ function findCrlf(buffer: Uint8Array): number {
 }
 
 export async function fetchImapMessages(input: ImapImportInput): Promise<ImportMessageInput[]> {
-	assertSafeImapHost(input.host);
+	const resolved = await resolveSafeImapHost(input.host);
 	const socket = await connectImapSocket({
-		hostname: input.host,
+		hostname: input.host.trim(),
+		address: resolved.address,
+		family: resolved.family,
 		port: input.port,
 		secure: input.secure,
 	});
@@ -218,9 +238,11 @@ export async function fetchImapMessages(input: ImapImportInput): Promise<ImportM
 }
 
 export async function listImapFolders(input: Omit<ImapImportInput, "folder" | "limit">): Promise<string[]> {
-	assertSafeImapHost(input.host);
+	const resolved = await resolveSafeImapHost(input.host);
 	const socket = await connectImapSocket({
-		hostname: input.host,
+		hostname: input.host.trim(),
+		address: resolved.address,
+		family: resolved.family,
 		port: input.port,
 		secure: input.secure,
 	});

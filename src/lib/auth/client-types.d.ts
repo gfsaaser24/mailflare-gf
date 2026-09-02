@@ -4,7 +4,6 @@ export type AuthFetchOptions = RequestInit & {
 
 export type AuthSessionResponse = {
 	ok?: boolean;
-	token?: string;
 	redirect?: string;
 	error?: string;
 };

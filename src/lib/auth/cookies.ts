@@ -1,20 +1,14 @@
 import { cookies } from "next/headers";
 import { SESSION_COOKIE, getUserFromSession } from "@/lib/auth/session";
 
-function getBearerToken(request?: Request): string | undefined {
-	const authorization = request?.headers.get("Authorization");
-	if (!authorization?.startsWith("Bearer ")) return undefined;
-	const token = authorization.slice(7).trim();
-	return token || undefined;
-}
-
-export async function getCurrentUser(env: CloudflareEnv, request?: Request) {
-	const bearerToken = getBearerToken(request);
-	if (bearerToken) {
-		const user = await getUserFromSession(env, bearerToken);
-		return user?.disabled ? null : user;
-	}
-
+/**
+ * Session authentication is cookie-only. `Authorization: Bearer` is reserved for
+ * API keys (see `src/lib/api/auth.ts`) and is deliberately ignored here, so an
+ * XSS that can forge headers still cannot present a stolen session token.
+ *
+ * `_request` is kept so existing callers (`getCurrentUser(env, request)`) compile.
+ */
+export async function getCurrentUser(env: CloudflareEnv, _request?: Request) {
 	const jar = await cookies();
 	const token = jar.get(SESSION_COOKIE)?.value;
 	const user = await getUserFromSession(env, token);

@@ -23,7 +23,7 @@ export type DomainSetupResult = {
 };
 
 export type RegisterResult = {
-	token?: string;
+	ok?: boolean;
 	redirect?: string;
 	error?: string;
 };

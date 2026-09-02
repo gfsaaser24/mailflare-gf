@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
 	AUTH_SESSION_CHANGED_EVENT,
-	getClientSessionToken,
+	hasClientSession,
 } from "@/lib/auth/client";
 import type {
 	MessageRealtimeState,
@@ -57,7 +57,7 @@ export function useMessagePolling(): MessageRealtimeState {
 
 		function scheduleReconnect() {
 			closeSource();
-			if (stopped || !getClientSessionToken()) return;
+			if (stopped || !hasClientSession()) return;
 			startFallbackRefresh();
 			const delay = getReconnectDelay(reconnectAttempt);
 			reconnectAttempt += 1;
@@ -66,7 +66,7 @@ export function useMessagePolling(): MessageRealtimeState {
 
 		function connect() {
 			clearConnectionTimers();
-			if (stopped || !getClientSessionToken()) return;
+			if (stopped || !hasClientSession()) return;
 
 			source = new EventSource(getRealtimeEventSourceUrl());
 			source.onopen = () => {
@@ -92,7 +92,7 @@ export function useMessagePolling(): MessageRealtimeState {
 			clearConnectionTimers();
 			reconnectAttempt = 0;
 			setNotification(null);
-			if (getClientSessionToken()) connect();
+			if (hasClientSession()) connect();
 		}
 
 		window.addEventListener(AUTH_SESSION_CHANGED_EVENT, restartForSessionChange);

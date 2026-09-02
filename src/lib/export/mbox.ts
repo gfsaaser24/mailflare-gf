@@ -1,6 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { messages } from "@/db/schema";
+import { sanitizeEmailHtml } from "@/lib/email/sanitize";
 
 function escapeHeader(value: string | null): string {
 	return (value ?? "").replace(/\r?\n/g, " ").trim();
@@ -35,8 +36,11 @@ export async function exportMailboxToMbox(env: CloudflareEnv, mailboxId: string)
 
 	return rows.map((message) => {
 		const date = new Date(message.createdAt);
-		const body = message.htmlBody ?? message.textBody ?? "";
-		const contentType = message.htmlBody ? "text/html" : "text/plain";
+		// Bodies stored before server-side sanitisation existed are cleaned on
+		// the way out so an exported mbox never carries scripts.
+		const htmlBody = sanitizeEmailHtml(message.htmlBody);
+		const body = htmlBody ?? message.textBody ?? "";
+		const contentType = htmlBody ? "text/html" : "text/plain";
 		return [
 			getMboxFromLine(date),
 			`Message-ID: ${escapeHeader(message.providerMessageId || `<${message.id}@mailflare.local>`)}`,

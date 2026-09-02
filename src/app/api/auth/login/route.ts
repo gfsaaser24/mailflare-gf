@@ -46,9 +46,9 @@ export async function POST(request: Request) {
 
 	const token = await createSession(env, user.id);
 	await recordAuthActivity(env, { action: "auth.login", userId: user.id, request });
+	// The token goes into the httpOnly cookie only; never into the body.
 	const response = NextResponse.json({
 		ok: true,
-		token,
 		redirect: "/inbox",
 	});
 	response.headers.set("Cache-Control", "no-store");

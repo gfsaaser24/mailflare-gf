@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import type { getDb } from "@/db";
 import { domains, mailboxes, users } from "@/db/schema";
@@ -8,7 +8,11 @@ import { getEnv } from "@/lib/cloudflare";
 
 type Db = ReturnType<typeof getDb>;
 
-export function listAccountsForAdmin(db: Db) {
+/**
+ * Accounts visible to an admin: the admin themselves plus every account they
+ * created. (Org scoping replaces this in Wave 3; stop-gap for T1.4.)
+ */
+export function listAccountsForAdmin(db: Db, adminUserId: string) {
 	return db
 		.select({
 			id: users.id,
@@ -22,6 +26,7 @@ export function listAccountsForAdmin(db: Db) {
 			createdAt: users.createdAt,
 		})
 		.from(users)
+		.where(or(eq(users.id, adminUserId), eq(users.createdByUserId, adminUserId)))
 		.orderBy(desc(users.createdAt));
 }
 

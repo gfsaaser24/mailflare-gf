@@ -7,9 +7,8 @@ import { recordAuthActivity } from "@/lib/auth/activity";
 export async function POST(request: Request) {
 	const env = getEnv();
 	const jar = await cookies();
-	const authorization = request.headers.get("Authorization");
-	const bearerToken = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : undefined;
-	const token = bearerToken || jar.get(SESSION_COOKIE)?.value;
+	// Cookie-only: a session token is never read from the Authorization header.
+	const token = jar.get(SESSION_COOKIE)?.value;
 	if (token) {
 		const user = await getUserFromSession(env, token);
 		if (user) await recordAuthActivity(env, { action: "auth.logout", userId: user.id, request });

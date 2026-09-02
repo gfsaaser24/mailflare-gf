@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { messages } from "@/db/schema";
 import { newId } from "@/lib/ids";
@@ -69,6 +69,26 @@ export async function processInboundMessage(
 		subject: parsed.subject,
 		content: [parsed.text, parsed.html, snippet].filter(Boolean).join(" "),
 	});
+	// The edge worker retries on error, so the same message can arrive twice.
+	// Treat an inbound message we already stored for this mailbox as delivered.
+	if (parsed.messageId) {
+		const [existing] = await db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(
+					eq(messages.mailboxId, decision.mailbox.mailboxId),
+					eq(messages.direction, "inbound"),
+					eq(messages.providerMessageId, parsed.messageId),
+				),
+			)
+			.limit(1);
+		if (existing) {
+			await discardDuplicateRaw(env, payload.rawR2Key);
+			return;
+		}
+	}
+
 	const contact = await upsertContactFromAddress(env, {
 		userId: decision.mailbox.userId,
 		address: fromAddr,
@@ -93,7 +113,16 @@ export async function processInboundMessage(
 			status: destination.status,
 			threadId: parsed.messageId,
 		});
+	} catch (error) {
+		// Lost the race against a concurrent delivery of the same message: it is stored.
+		if (isUniqueViolation(error)) {
+			await discardDuplicateRaw(env, payload.rawR2Key);
+			return;
+		}
+		throw error;
+	}
 
+	try {
 		await storeMessageAttachments(env, messageId, parsed.attachments, { validate: false });
 	} catch (error) {
 		await db.delete(messages).where(eq(messages.id, messageId));
@@ -134,6 +163,23 @@ export async function processInboundMessage(
 		to: toAddr,
 		subject: parsed.subject,
 	});
+}
+
+/** Postgres unique_violation, raised by the partial index on (mailbox_id, provider_message_id). */
+function isUniqueViolation(error: unknown): boolean {
+	const code = (error as { code?: unknown })?.code;
+	if (code === "23505") return true;
+	const cause = (error as { cause?: unknown })?.cause;
+	return !!cause && cause !== error && isUniqueViolation(cause);
+}
+
+/** Removes the raw object stored for a delivery we are dropping, so nothing is orphaned. */
+async function discardDuplicateRaw(env: CloudflareEnv, rawR2Key: string): Promise<void> {
+	try {
+		await env.BUCKET.delete(rawR2Key);
+	} catch (error) {
+		console.error(`Could not delete duplicate raw object ${rawR2Key}`, error);
+	}
 }
 
 export async function storeRawToR2(

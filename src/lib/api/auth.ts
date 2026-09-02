@@ -2,6 +2,10 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { apiKeys, users } from "@/db/schema";
 import { verifyApiKey, parseScopes } from "@/lib/api-keys";
+import { isSessionToken } from "@/lib/auth/session";
+
+/** Mirrors `KEY_PREFIX` in `src/lib/api-keys.ts`; every issued API key starts with it. */
+const API_KEY_PREFIX = "ep_";
 
 export type ApiAuthResult = {
 	userId: string;
@@ -16,6 +20,9 @@ export async function authenticateApiKey(
 	if (!authorization?.startsWith("Bearer ")) return null;
 	const key = authorization.slice(7).trim();
 	if (!key) return null;
+	// Bearer is for API keys only. A session token presented here is never
+	// accepted: session auth is cookie-only.
+	if (isSessionToken(key) || !key.startsWith(API_KEY_PREFIX)) return null;
 
 	const prefix = key.slice(0, 12);
 	const db = getDb(env);

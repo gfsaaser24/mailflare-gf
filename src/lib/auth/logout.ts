@@ -1,4 +1,4 @@
-import { authFetch, clearClientSessionToken } from "@/lib/auth/client";
+import { authFetch, clearClientSession } from "@/lib/auth/client";
 
 export async function logoutClientSession(): Promise<void> {
 	try {
@@ -9,6 +9,6 @@ export async function logoutClientSession(): Promise<void> {
 	} catch {
 		// Local logout must complete even when the server request is unavailable.
 	} finally {
-		clearClientSessionToken();
+		clearClientSession();
 	}
 }

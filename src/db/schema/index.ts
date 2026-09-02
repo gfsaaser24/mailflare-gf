@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { pgTable, text, integer, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
@@ -205,6 +206,10 @@ export const messages = pgTable(
 		index("messages_user_created_idx").on(t.userId, t.createdAt),
 		index("messages_mailbox_idx").on(t.mailboxId),
 		index("messages_folder_idx").on(t.folderId),
+		// Inbound idempotency: the edge worker may retry the same message.
+		uniqueIndex("messages_inbound_provider_id_idx")
+			.on(t.mailboxId, t.providerMessageId)
+			.where(sql`${t.direction} = 'inbound' AND ${t.providerMessageId} IS NOT NULL`),
 	],
 );
 
@@ -411,6 +416,28 @@ export const backups = pgTable(
 	],
 );
 
+export const inboundFailures = pgTable(
+	"inbound_failures",
+	{
+		id: text("id").primaryKey(),
+		rawR2Key: text("raw_r2_key").notNull().unique(),
+		mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
+		fromAddr: text("from_addr").notNull(),
+		toAddr: text("to_addr").notNull(),
+		error: text("error"),
+		attempts: integer("attempts").notNull().default(1),
+		nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true, mode: "date" }),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+			.notNull()
+			.$defaultFn(() => new Date()),
+		resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+	},
+	(t) => [
+		index("inbound_failures_created_idx").on(t.createdAt),
+		index("inbound_failures_resolved_idx").on(t.resolvedAt),
+	],
+);
+
 export const schema = {
 	users,
 	domains,
@@ -433,4 +460,5 @@ export const schema = {
 	backupSettings,
 	backups,
 	appSettings,
+	inboundFailures,
 };

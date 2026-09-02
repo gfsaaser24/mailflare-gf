@@ -2,6 +2,7 @@ import PostalMime from "postal-mime";
 import { formatPostalAddress, formatPostalAddressList } from "@/lib/email/address";
 import { normalizeAttachmentContent } from "@/lib/email/attachments";
 import { getLatestEmailContent, htmlToReadableText } from "@/lib/email/reply-content-utils";
+import { sanitizeEmailHtml } from "@/lib/email/sanitize";
 import type { AttachmentContent } from "@/lib/email/attachment-types";
 
 export type ParsedEmail = {
@@ -21,7 +22,10 @@ export async function parseRawMime(raw: ArrayBuffer): Promise<ParsedEmail> {
 	return {
 		subject: stripNul(email.subject),
 		text: stripNul(email.text),
-		html: stripNul(email.html),
+		// Sanitised once, here, so every consumer of a stored body (UI, API,
+		// export, webhooks) gets HTML that is already safe. The raw MIME is kept
+		// verbatim in object storage.
+		html: sanitizeEmailHtml(stripNul(email.html)),
 		messageId: email.messageId ?? null,
 		fromAddr: formatPostalAddress(email.from, null),
 		toAddr: formatPostalAddressList(email.to, null),
