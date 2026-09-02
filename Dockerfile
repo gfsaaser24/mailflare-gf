@@ -2,7 +2,8 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+ENV NODE_ENV=development
+RUN npm ci --include=dev --ignore-scripts
 
 FROM node:22-alpine AS build
 WORKDIR /app
