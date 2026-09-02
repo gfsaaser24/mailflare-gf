@@ -21,16 +21,22 @@ function buildEmailSender(): EmailSender {
 export function getEnv(): AppEnv {
 	if (cached) return cached;
 	const e = process.env;
+	// DB/BUCKET are left undefined when their config is missing so the setup
+	// wizard (and the health check) can still run and report what is not set.
+	const storageConfigured =
+		!!e.STORAGE_S3_ENDPOINT && !!e.STORAGE_BUCKET && !!e.STORAGE_ACCESS_KEY_ID && !!e.STORAGE_SECRET_ACCESS_KEY;
 	cached = {
-		DB: getSharedDb(),
-		BUCKET: new StorageBucket({
-			endpoint: required("STORAGE_S3_ENDPOINT"),
-			region: e.STORAGE_S3_REGION ?? "auto",
-			bucket: required("STORAGE_BUCKET"),
-			accessKeyId: required("STORAGE_ACCESS_KEY_ID"),
-			secretAccessKey: required("STORAGE_SECRET_ACCESS_KEY"),
-			forcePathStyle: true,
-		}),
+		DB: (e.DATABASE_URL ? getSharedDb() : undefined) as AppEnv["DB"],
+		BUCKET: (storageConfigured
+			? new StorageBucket({
+					endpoint: required("STORAGE_S3_ENDPOINT"),
+					region: e.STORAGE_S3_REGION ?? "auto",
+					bucket: required("STORAGE_BUCKET"),
+					accessKeyId: required("STORAGE_ACCESS_KEY_ID"),
+					secretAccessKey: required("STORAGE_SECRET_ACCESS_KEY"),
+					forcePathStyle: true,
+				})
+			: undefined) as AppEnv["BUCKET"],
 		EMAIL: buildEmailSender(),
 		NODE_ENV: e.NODE_ENV,
 		APP_URL: e.APP_URL,

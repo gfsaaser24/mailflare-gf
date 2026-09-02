@@ -43,7 +43,9 @@ type SendRequestBody = {
 export default {
 	async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
 		const raw = await new Response(message.raw).arrayBuffer();
-		const alreadyForwarded = message.headers.get(MAILFLARE_FORWARDED_HEADER) !== null;
+		// Only our own forwarded copies carry the secret-derived marker; a sender-set header is ignored.
+		const marker = await forwardedMarker(env.EDGE_WORKER_SECRET);
+		const alreadyForwarded = (message.headers.get(MAILFLARE_FORWARDED_HEADER) ?? "").trim() === marker;
 
 		let response: Response;
 		try {
@@ -54,7 +56,8 @@ export default {
 					"Content-Type": "message/rfc822",
 					"X-Mail-From": message.from,
 					"X-Mail-To": message.to,
-					"X-Mail-Headers": JSON.stringify(Object.fromEntries(message.headers)),
+					// base64 so non-Latin-1 header values survive the HTTP header round-trip
+					"X-Mail-Headers": encodeMailHeaders(message.headers),
 				},
 				body: raw,
 			});
@@ -83,7 +86,7 @@ export default {
 
 		try {
 			const headers = new Headers();
-			headers.set(MAILFLARE_FORWARDED_HEADER, "1");
+			headers.set(MAILFLARE_FORWARDED_HEADER, marker);
 			await message.forward(forwardTo, headers);
 		} catch (error) {
 			console.error("Account forwarding failed for " + message.to, error);
@@ -173,6 +176,22 @@ function timingSafeEqual(a: string, b: string): boolean {
 	let diff = 0;
 	for (let i = 0; i < left.byteLength; i++) diff |= left[i] ^ right[i];
 	return diff === 0;
+}
+
+/** Must match `forwardedMarker` in src/lib/email/account-forwarding.ts. */
+async function forwardedMarker(secret: string): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret + ":forwarded"));
+	return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+
+/** JSON of the mail headers, UTF-8 encoded then base64 (HTTP headers are Latin-1 only). */
+function encodeMailHeaders(headers: Headers): string {
+	const bytes = new TextEncoder().encode(JSON.stringify(Object.fromEntries(headers)));
+	let binary = "";
+	for (let i = 0; i < bytes.length; i += 0x8000) {
+		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	}
+	return btoa(binary);
 }
 
 function fromBase64(value: string): Uint8Array {

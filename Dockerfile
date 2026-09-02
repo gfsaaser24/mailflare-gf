@@ -18,6 +18,8 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# inbound relay carries the mail header block in a request header; mailing-list mail can exceed Node's 16 KB default
+ENV NODE_OPTIONS=--max-http-header-size=65536
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static

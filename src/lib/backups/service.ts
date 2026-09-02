@@ -64,10 +64,11 @@ export async function updateBackupSettings(
 		retentionDays: number;
 	},
 ) {
+	// Fresh installs have no settings row yet, so upsert instead of update.
 	await getDb(env)
-		.update(backupSettings)
-		.set({ ...input, updatedAt: new Date() })
-		.where(eq(backupSettings.id, BACKUP_SETTINGS_ID));
+		.insert(backupSettings)
+		.values({ id: BACKUP_SETTINGS_ID, ...input, updatedAt: new Date() })
+		.onConflictDoUpdate({ target: backupSettings.id, set: { ...input, updatedAt: new Date() } });
 }
 
 export async function deleteBackup(env: CloudflareEnv, id: string): Promise<boolean> {

@@ -25,22 +25,6 @@ export async function GET(request: Request) {
 		start(controller) {
 			controller.enqueue(encoder.encode(": connected\n\n"));
 
-			unsubscribe = emitter.subscribe(user.id, (payload) => {
-				try {
-					controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
-				} catch {
-					// Controller may already be closed.
-				}
-			});
-
-			heartbeat = setInterval(() => {
-				try {
-					controller.enqueue(encoder.encode(": ping\n\n"));
-				} catch {
-					// Controller may already be closed.
-				}
-			}, HEARTBEAT_INTERVAL_MS);
-
 			const cleanup = () => {
 				if (heartbeat) clearInterval(heartbeat);
 				heartbeat = null;
@@ -52,6 +36,24 @@ export async function GET(request: Request) {
 					// Already closed.
 				}
 			};
+
+			// Bounded delivery: a client that stops reading gets disconnected instead of
+			// growing the stream queue without limit. It will reconnect (EventSource) and
+			// fall back to polling for anything it missed.
+			const send = (chunk: string) => {
+				if ((controller.desiredSize ?? 0) <= 0) {
+					cleanup();
+					return;
+				}
+				try {
+					controller.enqueue(encoder.encode(chunk));
+				} catch {
+					// Controller may already be closed.
+				}
+			};
+
+			unsubscribe = emitter.subscribe(user.id, (payload) => send(`data: ${JSON.stringify(payload)}\n\n`));
+			heartbeat = setInterval(() => send(": ping\n\n"), HEARTBEAT_INTERVAL_MS);
 
 			request.signal.addEventListener("abort", cleanup);
 		},

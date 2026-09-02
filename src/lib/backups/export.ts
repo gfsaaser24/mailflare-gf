@@ -75,7 +75,10 @@ async function insertRows(
 		sql.raw(", "),
 	);
 	const valueRows = rows.map((row) => {
-		if (Object.keys(row).length !== columns.length) throw new Error(`Backup contains an invalid ${table} record`);
+		const rowColumns = Object.keys(row);
+		if (rowColumns.length !== columns.length || !columns.every((column) => Object.hasOwn(row, column))) {
+			throw new Error(`Backup contains an invalid ${table} record`);
+		}
 		const values = columns.map((column) => sql`${coerceValue(column, row[column])}`);
 		return sql`(${sql.join(values, sql.raw(", "))})`;
 	});

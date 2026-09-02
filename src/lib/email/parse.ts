@@ -19,9 +19,9 @@ export async function parseRawMime(raw: ArrayBuffer): Promise<ParsedEmail> {
 	const email = await PostalMime.parse(raw);
 	const date = email.date ? new Date(email.date) : null;
 	return {
-		subject: email.subject ?? null,
-		text: email.text ?? null,
-		html: email.html ?? null,
+		subject: stripNul(email.subject),
+		text: stripNul(email.text),
+		html: stripNul(email.html),
 		messageId: email.messageId ?? null,
 		fromAddr: formatPostalAddress(email.from, null),
 		toAddr: formatPostalAddressList(email.to, null),
@@ -34,6 +34,12 @@ export async function parseRawMime(raw: ArrayBuffer): Promise<ParsedEmail> {
 			contentId: attachment.contentId ?? null,
 		})),
 	};
+}
+
+/** Postgres `text` columns reject NUL bytes; SQLite accepted them. */
+function stripNul(value: string | null | undefined): string | null {
+	if (value == null) return null;
+	return value.includes("\u0000") ? value.replaceAll("\u0000", "") : value;
 }
 
 export function buildSnippet(text: string | null, html: string | null, max = 200): string {

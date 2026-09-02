@@ -96,7 +96,8 @@ export class StorageBucket {
 			const bytes = async () => (cached ??= await stream.transformToByteArray());
 			return {
 				key,
-				size: result.ContentLength ?? 0,
+				// For ranged reads ContentLength is the range size; the total is in Content-Range.
+				size: Number(result.ContentRange?.split("/")[1]) || result.ContentLength || 0,
 				httpMetadata: { contentType: result.ContentType },
 				customMetadata: result.Metadata,
 				get body() {

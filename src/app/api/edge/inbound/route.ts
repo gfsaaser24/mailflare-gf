@@ -2,12 +2,10 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { getEnv } from "@/lib/cloudflare";
-import {
-	getAccountForwardingDestination,
-	MAILFLARE_FORWARDED_HEADER,
-} from "@/lib/email/account-forwarding";
+import { getAccountForwardingDestination, hasTrustedForwardedFlag } from "@/lib/email/account-forwarding";
 import { processInboundMessage, storeRawToR2 } from "@/lib/email/inbound";
 import { resolveInboundAddress } from "@/lib/email/routing";
+import { createAuditLog } from "@/lib/mailboxes/audit";
 
 /**
  * Inbound mail relayed by the thin Cloudflare edge worker (cloudflare-worker/).
@@ -37,12 +35,19 @@ export async function POST(request: Request) {
 	try {
 		await processInboundMessage(env, { from, to, rawR2Key, headers });
 	} catch (error) {
-		// The raw message is already stored, so never bounce here: reprocessing is possible.
+		// The raw message is already stored, so never bounce here. Record the failure
+		// in the audit log (keyed by the raw object) so it can be found and reprocessed.
 		console.error(`Inbound processing failed for ${to} (raw ${rawR2Key})`, error);
+		await createAuditLog(env, {
+			actorUserId: null,
+			mailboxId: decision.mailbox.mailboxId,
+			action: "email.inbound_failed",
+			metadata: { rawR2Key, from, to, error: error instanceof Error ? error.message : String(error) },
+		}).catch((auditError) => console.error("Could not record inbound failure", auditError));
 	}
 
 	let forwardTo: string | undefined;
-	if (!hasForwardedFlag(headers)) {
+	if (!hasTrustedForwardedFlag(headers, env.EDGE_WORKER_SECRET)) {
 		try {
 			forwardTo = (await getAccountForwardingDestination(env, to)) ?? undefined;
 		} catch (error) {
@@ -56,7 +61,9 @@ export async function POST(request: Request) {
 function parseMailHeaders(value: string | null): Record<string, string> {
 	if (!value) return {};
 	try {
-		const parsed: unknown = JSON.parse(value);
+		// The worker sends base64(UTF-8 JSON); accept plain JSON too for manual tests.
+		const text = value.trimStart().startsWith("{") ? value : Buffer.from(value, "base64").toString("utf8");
+		const parsed: unknown = JSON.parse(text);
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
 		return Object.fromEntries(
 			Object.entries(parsed as Record<string, unknown>).map(([key, entry]) => [key, String(entry)]),
@@ -66,10 +73,6 @@ function parseMailHeaders(value: string | null): Record<string, string> {
 	}
 }
 
-function hasForwardedFlag(headers: Record<string, string>): boolean {
-	const flag = MAILFLARE_FORWARDED_HEADER.toLowerCase();
-	return Object.keys(headers).some((key) => key.toLowerCase() === flag);
-}
 
 function isAuthorized(request: Request, secret: string | undefined): boolean {
 	if (!secret) return false;
