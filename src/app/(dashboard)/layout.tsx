@@ -9,7 +9,6 @@ import { MailSearchInput } from "@/components/mail-search/mail-search-input";
 import { MailSearchProvider } from "@/components/mail-search/mail-search-context";
 import { MailboxProvider } from "@/components/mailbox-provider";
 import { MailboxSelector } from "@/components/mailbox-selector";
-import { LicenseIndicator } from "@/components/license-indicator";
 import { DashboardNav } from "@/components/dashboard-nav";
 import { SidebarProvider } from "@/components/sidebar-state";
 
@@ -37,7 +36,6 @@ export default function DashboardLayout({
                   >
                     <HelpCircle className="h-5 w-5" />
                   </Link>
-                  <LicenseIndicator />
                   <MailboxSelector />
                 </header>
                 <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-tl-3xl bg-white scrollbar-gutter-stable">

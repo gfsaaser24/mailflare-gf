@@ -25,7 +25,6 @@ export async function GET(request: Request, { params }: AttachmentRouteParams) {
 		(attachment.disposition === "inline" ||
 			(previewRequested && isPreviewableAttachmentType(attachment.contentType)));
 	const headers = new Headers();
-	object.writeHttpMetadata(headers);
 	headers.set("Content-Type", attachment.contentType);
 	headers.set("Content-Length", String(attachment.size));
 	headers.set("Content-Disposition", getAttachmentContentDisposition(attachment.filename, inline));

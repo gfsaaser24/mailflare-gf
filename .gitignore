@@ -53,3 +53,6 @@ next-env.d.ts
 yarn.lock
 wrangler.prod.jsonc
 mailflare-landing
+
+# local secrets (server creds, ssh keys)
+.secrets/

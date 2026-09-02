@@ -1,6 +1,8 @@
+import { getClientIp } from "@/lib/http/ip";
+
 export async function allowLoginAttempt(env: CloudflareEnv, request: Request): Promise<boolean> {
 	if (!env.LOGIN_RATE_LIMIT) return true;
-	const ip = request.headers.get("cf-connecting-ip")?.trim() || "unknown";
+	const ip = getClientIp(request);
 	try {
 		const outcome = await env.LOGIN_RATE_LIMIT.limit({ key: ip });
 		return outcome.success;

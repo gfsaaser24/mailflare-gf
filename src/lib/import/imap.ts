@@ -1,4 +1,6 @@
-import type { ImportMessageInput } from "./types";
+import { connect as netConnect, type Socket as NetSocket } from "node:net";
+import { Readable, Writable } from "node:stream";
+import { connect as tlsConnect } from "node:tls";
 import type { ImapImportInput } from "./imap-types";
 import {
 	assertSafeImapHost,
@@ -8,24 +10,52 @@ import {
 	parseSearchUids,
 	quoteImapString,
 } from "./imap-utils";
+import type { ImportMessageInput } from "./types";
 
-type CloudflareSocketConnect = (
-	address: { hostname: string; port: number },
-	options: { secureTransport: "on" | "off"; allowHalfOpen: boolean },
-) => Socket;
+type ImapSocket = {
+	readable: ReadableStream<Uint8Array>;
+	writable: WritableStream<Uint8Array>;
+	close: () => Promise<void>;
+};
 
-async function getCloudflareSocketConnect(): Promise<CloudflareSocketConnect> {
-	try {
-		const moduleName = "cloudflare:sockets";
-		const sockets = await import(
-			/* webpackIgnore: true */
-			/* @vite-ignore */
-			moduleName
-		) as { connect: CloudflareSocketConnect };
-		return sockets.connect;
-	} catch {
-		throw new Error("IMAP import requires the Cloudflare Workers socket runtime");
-	}
+function toImapSocket(socket: NetSocket): ImapSocket {
+	return {
+		readable: Readable.toWeb(socket) as ReadableStream<Uint8Array>,
+		writable: Writable.toWeb(socket) as WritableStream<Uint8Array>,
+		close: () =>
+			new Promise<void>((resolve) => {
+				socket.once("close", () => resolve());
+				socket.destroy();
+			}),
+	};
+}
+
+async function connectImapSocket(input: {
+	hostname: string;
+	port: number;
+	secure: boolean;
+}): Promise<ImapSocket> {
+	return new Promise((resolve, reject) => {
+		const onError = (error: Error) => reject(error);
+
+		if (input.secure) {
+			const socket = tlsConnect(
+				{ host: input.hostname, port: input.port },
+				() => {
+					socket.off("error", onError);
+					resolve(toImapSocket(socket));
+				},
+			);
+			socket.once("error", onError);
+			return;
+		}
+
+		const socket = netConnect({ host: input.hostname, port: input.port }, () => {
+			socket.off("error", onError);
+			resolve(toImapSocket(socket));
+		});
+		socket.once("error", onError);
+	});
 }
 
 class ImapConnection {
@@ -35,8 +65,10 @@ class ImapConnection {
 	private encoder = new TextEncoder();
 	private buffer = new Uint8Array();
 	private tagCounter = 0;
+	private socket: ImapSocket;
 
-	constructor(socket: Socket) {
+	constructor(socket: ImapSocket) {
+		this.socket = socket;
 		this.reader = socket.readable.getReader();
 		this.writer = socket.writable.getWriter();
 	}
@@ -44,6 +76,11 @@ class ImapConnection {
 	async close(): Promise<void> {
 		try {
 			await this.writer.close();
+		} catch {
+			// Socket may already be closed by the server.
+		}
+		try {
+			await this.socket.close();
 		} catch {
 			// Socket may already be closed by the server.
 		}
@@ -141,11 +178,11 @@ function findCrlf(buffer: Uint8Array): number {
 
 export async function fetchImapMessages(input: ImapImportInput): Promise<ImportMessageInput[]> {
 	assertSafeImapHost(input.host);
-	const connect = await getCloudflareSocketConnect();
-	const socket = connect(
-		{ hostname: input.host, port: input.port },
-		{ secureTransport: input.secure ? "on" : "off", allowHalfOpen: false },
-	);
+	const socket = await connectImapSocket({
+		hostname: input.host,
+		port: input.port,
+		secure: input.secure,
+	});
 	const imap = new ImapConnection(socket);
 	try {
 		await imap.readGreeting();
@@ -169,11 +206,11 @@ export async function fetchImapMessages(input: ImapImportInput): Promise<ImportM
 
 export async function listImapFolders(input: Omit<ImapImportInput, "folder" | "limit">): Promise<string[]> {
 	assertSafeImapHost(input.host);
-	const connect = await getCloudflareSocketConnect();
-	const socket = connect(
-		{ hostname: input.host, port: input.port },
-		{ secureTransport: input.secure ? "on" : "off", allowHalfOpen: false },
-	);
+	const socket = await connectImapSocket({
+		hostname: input.host,
+		port: input.port,
+		secure: input.secure,
+	});
 	const imap = new ImapConnection(socket);
 	try {
 		await imap.readGreeting();

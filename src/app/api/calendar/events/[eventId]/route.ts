@@ -23,7 +23,7 @@ export async function PATCH(request: Request, { params }: CalendarEventRoutePara
 	const attendees = (input.attendees ?? []).map((email) => email.trim()).filter((email) => /^\S+@\S+\.\S+$/.test(email));
 	const event = { ...existing, title: input.title.trim(), description: input.description?.trim() ?? "", location: input.location?.trim() ?? "", attendees: JSON.stringify(attendees), startsAt, endsAt };
 	await db.update(calendarEvents).set({ title: event.title, description: event.description, location: event.location, attendees: event.attendees, startsAt, endsAt, updatedAt: new Date() }).where(eq(calendarEvents.id, eventId));
-	if (attendees.length && existing.mailboxId && input.from) { const file = createCalendarInvitation({ ...event, uid: eventId }); await Promise.all(attendees.map((to) => sendEmail(env, { userId: user.id, mailboxId: existing.mailboxId!, from: input.from!, to, subject: `Updated invitation: ${event.title}`, text: event.description || `This event has been updated: ${event.title}.`, attachments: [{ filename: "invite.ics", type: "text/calendar; charset=utf-8", content: file }] }))); }
+	if (attendees.length && existing.mailboxId && input.from) { const file = createCalendarInvitation({ ...event, uid: eventId }); const fileBuffer = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer; await Promise.all(attendees.map((to) => sendEmail(env, { userId: user.id, mailboxId: existing.mailboxId!, from: input.from!, to, subject: `Updated invitation: ${event.title}`, text: event.description || `This event has been updated: ${event.title}.`, attachments: [{ filename: "invite.ics", type: "text/calendar; charset=utf-8", content: fileBuffer }] }))); }
 	return NextResponse.json({ ok: true });
 }
 

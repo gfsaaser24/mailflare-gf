@@ -1,0 +1,13 @@
+node_modules
+.next
+.open-next
+.wrangler
+.git
+.secrets
+.env*
+!.env.example
+cloudflare-worker/node_modules
+mailflare-landing
+docs/demo.mp4
+screenshot.png
+*.tsbuildinfo

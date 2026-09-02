@@ -1,71 +1,66 @@
 # Deployment and configuration
 
-This guide covers Cloudflare deployment, runtime configuration, database backups, and application updates.
+This guide covers the Docker deployment of the app, the thin Cloudflare edge worker, runtime configuration, database backups, and application updates.
 
-## One-click deployment
+## Architecture
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/hieunc229/mailflare)
+Mailflare runs as a normal Node application. Cloudflare keeps exactly two jobs, both handled by the thin worker in `cloudflare-worker/`:
 
-The deployment flow reads `wrangler.jsonc`, provisions the required Worker bindings, builds the OpenNext Worker, applies D1 migrations, and deploys the app.
+- Email Routing delivers inbound mail to the worker's `email()` handler, which relays the raw message to `POST ${APP_URL}/api/edge/inbound`.
+- The worker exposes `POST /send`, which relays outbound mail through the Cloudflare `send_email` binding.
 
-Keep `wrangler.jsonc` committed. Do not commit `.dev.vars`; enter secrets during Cloudflare setup or keep them in a local `.dev.vars` file.
+The worker stores nothing. All data lives in Postgres (Supabase) and the S3-compatible object store.
 
-## Required configuration
+## Deploy the app (Docker / Coolify)
 
-Mailflare needs these runtime values:
-
-- `CF_TOKEN` — a scoped Cloudflare API token with Zone Read, Email Routing Edit, Email Sending Edit, and Email Routing Rules Write access for the domains you will connect. This is separate from the token Cloudflare uses to deploy the app.
-- `CF_EMAIL_WORKER_NAME` — the deployed Worker name. It must match the Worker name exactly so Mailflare can create Email Routing rules.
-- `CF_AID` — the Cloudflare account ID. This is optional for normal mail use but required for database backups.
-
-You can use a legacy Global API Key instead of `CF_TOKEN` by setting both `CF_API_KEY` and `CF_EMAIL`.
-
-Copy `.dev.vars.example` when configuring a local environment:
+The app is a standard Next.js server image. In Coolify, create an application from this repository, use the included Dockerfile, and set the environment variables listed in `.env.example`:
 
 ```bash
-cp .dev.vars.example .dev.vars
+cp .env.example .env
 ```
 
-Paste only the token value into `CF_TOKEN`; do not include `Bearer` and do not use the token ID.
+Required values:
+
+- `DATABASE_URL` — Supabase Postgres connection string.
+- `STORAGE_S3_ENDPOINT`, `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY` — the S3-style object store for raw messages and attachments.
+- `APP_URL` — the public URL of this app. The edge worker posts inbound mail to it.
+- `EDGE_WORKER_SECRET` — shared secret between the app and the edge worker. Generate one with `openssl rand -hex 32`.
+- `EDGE_WORKER_URL` — the deployed edge worker URL, for example `https://mailflare-edge.<account>.workers.dev`.
+- `CF_TOKEN` — a scoped Cloudflare API token with Zone Read, Email Routing Edit, and Email Routing Rules Write access for the domains you connect. You can use a legacy Global API Key instead by setting both `CF_API_KEY` and `CF_EMAIL`. Paste only the token value; do not include `Bearer` and do not use the token ID.
+- `CF_EMAIL_WORKER_NAME` — the deployed edge worker name. Defaults to `mailflare-edge`.
+- `CF_AID` — the Cloudflare account ID.
+
+Apply database migrations against the configured Postgres database:
+
+```bash
+npm run db:migrate
+```
+
+## Deploy the edge worker
+
+The worker lives in `cloudflare-worker/` and has its own `wrangler.jsonc`. Set `vars.APP_URL` there to the public URL of the app, then:
+
+```bash
+npm --prefix cloudflare-worker install
+npx wrangler secret put EDGE_WORKER_SECRET --cwd cloudflare-worker
+npm run edge:deploy
+```
+
+`EDGE_WORKER_SECRET` must be the same value as in the app environment. Check the deployment with `curl https://mailflare-edge.<account>.workers.dev/health`, which returns `ok`.
+
+## Email Routing
+
+For every connected domain, the Cloudflare Email Routing rule must target the Worker named `mailflare-edge` (or whatever you set as the worker `name` and `CF_EMAIL_WORKER_NAME`). Mailflare creates these rules for you when you add a domain; the names must match exactly or rule creation fails.
+
+If you rename the worker, keep these values aligned:
+
+- `name` in `cloudflare-worker/wrangler.jsonc`
+- `CF_EMAIL_WORKER_NAME` in the app environment
+- `EDGE_WORKER_URL` in the app environment
 
 ## First-run setup
 
-Open `/setup` after deployment. Mailflare checks the required runtime configuration and initializes an empty D1 database. It never applies later migrations to an existing database from the setup page.
-
-Use the normal migration command when updating an existing installation:
-
-```bash
-npm run db:migrate:remote
-```
-
-## Manual deployment
-
-Install dependencies, configure the Cloudflare bindings in `wrangler.jsonc`, and run:
-
-```bash
-npm install
-npm run deploy
-```
-
-The deploy command builds the OpenNext application and uploads the complete Worker with Wrangler. The complete Worker is required because `worker.ts` also handles inbound email, queues, workflows, and the real-time Durable Object.
-
-To migrate an existing remote D1 database before deploying, use:
-
-```bash
-npm run deploy:with-migrations
-```
-
-Remote migrations require the target account's `database_id` in your local `wrangler.jsonc`. Do not commit an account-specific database ID to a reusable repository.
-
-## Custom Worker names
-
-If you rename the Worker, keep these values aligned:
-
-- `name` in `wrangler.jsonc`
-- `services[].service` for the `WORKER_SELF_REFERENCE` binding
-- `CF_EMAIL_WORKER_NAME`
-
-Cloudflare service bindings use a literal Worker name and cannot inherit the top-level `name` value automatically.
+Open `/setup` after deployment. Mailflare checks the required runtime configuration and initializes an empty database. It never applies later migrations to an existing database from the setup page.
 
 ## Database backups
 
@@ -100,6 +95,3 @@ Optional repository variables:
 
 If an older installation contains a failing updater, copy the latest `.github/workflows/update.yml` into that installation once. An updater that cannot read upstream cannot update its own workflow.
 
-## Branding license
-
-Activate a purchased Pro or Team key from **Admin → Licenses**. Mailflare sends the key to Paymug and stores only a one-way hash and the activation state. Apply all D1 migrations before activating a license.

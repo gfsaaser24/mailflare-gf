@@ -4,9 +4,8 @@ export const REALTIME_FALLBACK_INTERVAL_MS = 60_000;
 export const REALTIME_HEARTBEAT_INTERVAL_MS = 25_000;
 export const REALTIME_RECONNECT_MAX_MS = 30_000;
 
-export function getRealtimeWebSocketUrl(): string {
-	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-	return `${protocol}//${window.location.host}/api/realtime`;
+export function getRealtimeEventSourceUrl(): string {
+	return "/api/realtime";
 }
 
 export function getReconnectDelay(attempt: number): number {

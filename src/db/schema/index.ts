@@ -1,7 +1,7 @@
-import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
-import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
 	id: text("id").primaryKey(),
 	email: text("email").notNull().unique(),
 	resetEmail: text("reset_email"),
@@ -10,15 +10,15 @@ export const users = sqliteTable("users", {
 	name: text("name").notNull(),
 	avatarKey: text("avatar_key"),
 	role: text("role", { enum: ["admin", "user"] }).notNull().default("user"),
-	disabled: integer("disabled", { mode: "boolean" }).notNull().default(false),
-	canManageMailboxes: integer("can_manage_mailboxes", { mode: "boolean" }).notNull().default(false),
-	createdByUserId: text("created_by_user_id").references((): AnySQLiteColumn => users.id, { onDelete: "set null" }),
-	createdAt: integer("created_at", { mode: "timestamp" })
+	disabled: boolean("disabled").notNull().default(false),
+	canManageMailboxes: boolean("can_manage_mailboxes").notNull().default(false),
+	createdByUserId: text("created_by_user_id").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const domains = sqliteTable(
+export const domains = pgTable(
 	"domains",
 	{
 		id: text("id").primaryKey(),
@@ -32,9 +32,9 @@ export const domains = sqliteTable(
 			.default("pending"),
 		routingStatus: text("routing_status"),
 		sendingSubdomainTag: text("sending_subdomain_tag"),
-		sendingEnabled: integer("sending_enabled", { mode: "boolean" }).notNull().default(false),
-		routingEnabled: integer("routing_enabled", { mode: "boolean" }).notNull().default(false),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		sendingEnabled: boolean("sending_enabled").notNull().default(false),
+		routingEnabled: boolean("routing_enabled").notNull().default(false),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
@@ -44,7 +44,7 @@ export const domains = sqliteTable(
 	],
 );
 
-export const mailboxes = sqliteTable(
+export const mailboxes = pgTable(
 	"mailboxes",
 	{
 		id: text("id").primaryKey(),
@@ -57,21 +57,21 @@ export const mailboxes = sqliteTable(
 		localPart: text("local_part").notNull(),
 		displayName: text("display_name"),
 		signature: text("signature"),
-		autoReplyEnabled: integer("auto_reply_enabled", { mode: "boolean" }).notNull().default(false),
+		autoReplyEnabled: boolean("auto_reply_enabled").notNull().default(false),
 		autoReplySubject: text("auto_reply_subject").notNull().default("Out of office"),
 		autoReplyBody: text("auto_reply_body").notNull().default(""),
 		avatarKey: text("avatar_key"),
 		type: text("type", { enum: ["personal", "shared"] }).notNull().default("personal"),
-		useAllDomains: integer("use_all_domains", { mode: "boolean" }).notNull().default(true),
-		disabled: integer("disabled", { mode: "boolean" }).notNull().default(false),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		useAllDomains: boolean("use_all_domains").notNull().default(true),
+		disabled: boolean("disabled").notNull().default(false),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
 	(t) => [uniqueIndex("mailboxes_address_idx").on(t.domainId, t.localPart)],
 );
 
-export const autoReplyDeliveries = sqliteTable(
+export const autoReplyDeliveries = pgTable(
 	"auto_reply_deliveries",
 	{
 		id: text("id").primaryKey(),
@@ -79,7 +79,7 @@ export const autoReplyDeliveries = sqliteTable(
 			.notNull()
 			.references(() => mailboxes.id, { onDelete: "cascade" }),
 		recipient: text("recipient").notNull(),
-		sentAt: integer("sent_at", { mode: "timestamp" }).notNull(),
+		sentAt: timestamp("sent_at", { withTimezone: true, mode: "date" }).notNull(),
 	},
 	(t) => [
 		uniqueIndex("auto_reply_deliveries_mailbox_recipient_idx").on(t.mailboxId, t.recipient),
@@ -87,7 +87,7 @@ export const autoReplyDeliveries = sqliteTable(
 	],
 );
 
-export const mailboxAccess = sqliteTable(
+export const mailboxAccess = pgTable(
 	"mailbox_access",
 	{
 		id: text("id").primaryKey(),
@@ -101,7 +101,7 @@ export const mailboxAccess = sqliteTable(
 			.notNull()
 			.default("read_only"),
 		createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
@@ -112,7 +112,7 @@ export const mailboxAccess = sqliteTable(
 	],
 );
 
-export const contacts = sqliteTable(
+export const contacts = pgTable(
 	"contacts",
 	{
 		id: text("id").primaryKey(),
@@ -124,9 +124,9 @@ export const contacts = sqliteTable(
 		source: text("source", { enum: ["manual", "inbound", "outbound"] })
 			.notNull()
 			.default("inbound"),
-		blocked: integer("blocked", { mode: "boolean" }).notNull().default(false),
-		lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		blocked: boolean("blocked").notNull().default(false),
+		lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" }),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
@@ -136,7 +136,7 @@ export const contacts = sqliteTable(
 	],
 );
 
-export const folders = sqliteTable(
+export const folders = pgTable(
 	"folders",
 	{
 		id: text("id").primaryKey(),
@@ -148,7 +148,7 @@ export const folders = sqliteTable(
 			.references(() => mailboxes.id, { onDelete: "cascade" }),
 		name: text("name").notNull(),
 		color: text("color").notNull().default("#2563eb"),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
@@ -159,7 +159,7 @@ export const folders = sqliteTable(
 	],
 );
 
-export const apiKeys = sqliteTable("api_keys", {
+export const apiKeys = pgTable("api_keys", {
 	id: text("id").primaryKey(),
 	userId: text("user_id")
 		.notNull()
@@ -168,13 +168,13 @@ export const apiKeys = sqliteTable("api_keys", {
 	prefix: text("prefix").notNull(),
 	keyHash: text("key_hash").notNull(),
 	scopes: text("scopes").notNull(),
-	createdAt: integer("created_at", { mode: "timestamp" })
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
-	lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+	lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
 });
 
-export const messages = sqliteTable(
+export const messages = pgTable(
 	"messages",
 	{
 		id: text("id").primaryKey(),
@@ -193,11 +193,11 @@ export const messages = sqliteTable(
 		htmlBody: text("html_body"),
 		rawR2Key: text("raw_r2_key"),
 		status: text("status").notNull().default("received"),
-		read: integer("read", { mode: "boolean" }).notNull().default(false),
-		starred: integer("starred", { mode: "boolean" }).notNull().default(false),
-		snoozedUntil: integer("snoozed_until", { mode: "timestamp" }),
+		read: boolean("read").notNull().default(false),
+		starred: boolean("starred").notNull().default(false),
+		snoozedUntil: timestamp("snoozed_until", { withTimezone: true, mode: "date" }),
 		threadId: text("thread_id"),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
@@ -208,7 +208,7 @@ export const messages = sqliteTable(
 	],
 );
 
-export const messageAttachments = sqliteTable(
+export const messageAttachments = pgTable(
 	"message_attachments",
 	{
 		id: text("id").primaryKey(),
@@ -223,14 +223,14 @@ export const messageAttachments = sqliteTable(
 			.default("attachment"),
 		contentId: text("content_id"),
 		r2Key: text("r2_key").notNull().unique(),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
 	(t) => [index("message_attachments_message_idx").on(t.messageId)],
 );
 
-export const outboundJobs = sqliteTable("outbound_jobs", {
+export const outboundJobs = pgTable("outbound_jobs", {
 	id: text("id").primaryKey(),
 	userId: text("user_id")
 		.notNull()
@@ -239,16 +239,16 @@ export const outboundJobs = sqliteTable("outbound_jobs", {
 	status: text("status", { enum: ["queued", "sent", "failed"] }).notNull().default("queued"),
 	payload: text("payload").notNull(),
 	error: text("error"),
-	scheduledAt: integer("scheduled_at", { mode: "timestamp" }),
-	createdAt: integer("created_at", { mode: "timestamp" })
+	scheduledAt: timestamp("scheduled_at", { withTimezone: true, mode: "date" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
-	updatedAt: integer("updated_at", { mode: "timestamp" })
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const emailTemplates = sqliteTable(
+export const emailTemplates = pgTable(
 	"email_templates",
 	{
 		id: text("id").primaryKey(),
@@ -256,13 +256,13 @@ export const emailTemplates = sqliteTable(
 		name: text("name").notNull(),
 		subject: text("subject").notNull().default(""),
 		textBody: text("text_body").notNull().default(""),
-		createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-		updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+		updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
 	},
 	(t) => [index("email_templates_user_idx").on(t.userId)],
 );
 
-export const calendarEvents = sqliteTable(
+export const calendarEvents = pgTable(
 	"calendar_events",
 	{
 		id: text("id").primaryKey(),
@@ -272,15 +272,15 @@ export const calendarEvents = sqliteTable(
 		description: text("description").notNull().default(""),
 		location: text("location").notNull().default(""),
 		attendees: text("attendees").notNull().default("[]"),
-		startsAt: integer("starts_at", { mode: "timestamp" }).notNull(),
-		endsAt: integer("ends_at", { mode: "timestamp" }).notNull(),
-		createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
-		updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+		startsAt: timestamp("starts_at", { withTimezone: true, mode: "date" }).notNull(),
+		endsAt: timestamp("ends_at", { withTimezone: true, mode: "date" }).notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
+		updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
 	},
 	(t) => [index("calendar_events_user_starts_idx").on(t.userId, t.startsAt)],
 );
 
-export const routingRules = sqliteTable("routing_rules", {
+export const routingRules = pgTable("routing_rules", {
 	id: text("id").primaryKey(),
 	userId: text("user_id")
 		.notNull()
@@ -297,12 +297,12 @@ export const routingRules = sqliteTable("routing_rules", {
 	action: text("action", { enum: ["store", "forward", "reject", "spam", "trash"] }).notNull().default("store"),
 	forwardTo: text("forward_to"),
 	priority: integer("priority").notNull().default(0),
-	createdAt: integer("created_at", { mode: "timestamp" })
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const webhooks = sqliteTable("webhooks", {
+export const webhooks = pgTable("webhooks", {
 	id: text("id").primaryKey(),
 	userId: text("user_id")
 		.notNull()
@@ -310,13 +310,13 @@ export const webhooks = sqliteTable("webhooks", {
 	url: text("url").notNull(),
 	secret: text("secret").notNull(),
 	events: text("events").notNull(),
-	enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-	createdAt: integer("created_at", { mode: "timestamp" })
+	enabled: boolean("enabled").notNull().default(true),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const webhookDeliveries = sqliteTable("webhook_deliveries", {
+export const webhookDeliveries = pgTable("webhook_deliveries", {
 	id: text("id").primaryKey(),
 	webhookId: text("webhook_id")
 		.notNull()
@@ -325,24 +325,24 @@ export const webhookDeliveries = sqliteTable("webhook_deliveries", {
 	payload: text("payload").notNull(),
 	status: text("status").notNull().default("pending"),
 	attempts: integer("attempts").notNull().default(0),
-	createdAt: integer("created_at", { mode: "timestamp" })
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const sessions = sqliteTable("sessions", {
+export const sessions = pgTable("sessions", {
 	id: text("id").primaryKey(),
 	userId: text("user_id")
 		.notNull()
 		.references(() => users.id, { onDelete: "cascade" }),
 	tokenHash: text("token_hash").notNull().unique(),
-	expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
-	createdAt: integer("created_at", { mode: "timestamp" })
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const auditLogs = sqliteTable(
+export const auditLogs = pgTable(
 	"audit_logs",
 	{
 		id: text("id").primaryKey(),
@@ -352,7 +352,7 @@ export const auditLogs = sqliteTable(
 		messageId: text("message_id").references(() => messages.id, { onDelete: "set null" }),
 		action: text("action").notNull(),
 		metadata: text("metadata"),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
 	},
@@ -363,47 +363,30 @@ export const auditLogs = sqliteTable(
 	],
 );
 
-export const backupSettings = sqliteTable("backup_settings", {
+export const backupSettings = pgTable("backup_settings", {
 	id: text("id").primaryKey(),
-	enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+	enabled: boolean("enabled").notNull().default(false),
 	scheduleType: text("schedule_type", { enum: ["daily", "weekly", "monthly"] })
 		.notNull()
 		.default("daily"),
 	scheduleValue: integer("schedule_value"),
-	retentionEnabled: integer("retention_enabled", { mode: "boolean" }).notNull().default(false),
+	retentionEnabled: boolean("retention_enabled").notNull().default(false),
 	retentionDays: integer("retention_days").notNull().default(30),
-	updatedAt: integer("updated_at", { mode: "timestamp" })
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const appSettings = sqliteTable("app_settings", {
+export const appSettings = pgTable("app_settings", {
 	id: text("id").primaryKey(),
 	appName: text("app_name").notNull().default("Mailflare"),
 	iconKey: text("icon_key"),
-	updatedAt: integer("updated_at", { mode: "timestamp" })
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
 
-export const licenseSettings = sqliteTable("license_settings", {
-	id: text("id").primaryKey(),
-	instanceId: text("instance_id").notNull().unique(),
-	instanceUrl: text("instance_url"),
-	licenseKeyHash: text("license_key_hash"),
-	plan: text("plan", { enum: ["community", "pro", "team"] }).notNull().default("community"),
-	state: text("state", { enum: ["inactive", "active", "invalid", "expired", "deactivated"] })
-		.notNull()
-		.default("inactive"),
-	features: text("features").notNull().default("[]"),
-	activatedAt: integer("activated_at", { mode: "timestamp" }),
-	validatedAt: integer("validated_at", { mode: "timestamp" }),
-	updatedAt: integer("updated_at", { mode: "timestamp" })
-		.notNull()
-		.$defaultFn(() => new Date()),
-});
-
-export const backups = sqliteTable(
+export const backups = pgTable(
 	"backups",
 	{
 		id: text("id").primaryKey(),
@@ -416,11 +399,11 @@ export const backups = sqliteTable(
 		size: integer("size"),
 		error: text("error"),
 		createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
-		createdAt: integer("created_at", { mode: "timestamp" })
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
-		startedAt: integer("started_at", { mode: "timestamp" }),
-		completedAt: integer("completed_at", { mode: "timestamp" }),
+		startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+		completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
 	},
 	(t) => [
 		index("backups_created_idx").on(t.createdAt),
@@ -450,5 +433,4 @@ export const schema = {
 	backupSettings,
 	backups,
 	appSettings,
-	licenseSettings,
 };

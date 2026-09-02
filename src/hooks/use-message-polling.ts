@@ -8,11 +8,10 @@ import type {
 	NewMessageEvent,
 } from "./message-realtime-types";
 import {
-	getRealtimeWebSocketUrl,
 	getReconnectDelay,
+	getRealtimeEventSourceUrl,
 	parseNewMessageEvent,
 	REALTIME_FALLBACK_INTERVAL_MS,
-	REALTIME_HEARTBEAT_INTERVAL_MS,
 	showBrowserNewMessageNotification,
 } from "./message-realtime-utils";
 
@@ -21,9 +20,8 @@ export function useMessagePolling(): MessageRealtimeState {
 	const dismissNotification = useCallback(() => setNotification(null), []);
 
 	useEffect(() => {
-		let socket: WebSocket | null = null;
+		let source: EventSource | null = null;
 		let reconnectTimer: number | null = null;
-		let heartbeatTimer: number | null = null;
 		let fallbackTimer: number | null = null;
 		let reconnectAttempt = 0;
 		let stopped = false;
@@ -34,10 +32,8 @@ export function useMessagePolling(): MessageRealtimeState {
 
 		function clearConnectionTimers() {
 			if (reconnectTimer) window.clearTimeout(reconnectTimer);
-			if (heartbeatTimer) window.clearInterval(heartbeatTimer);
 			if (fallbackTimer) window.clearInterval(fallbackTimer);
 			reconnectTimer = null;
-			heartbeatTimer = null;
 			fallbackTimer = null;
 		}
 
@@ -49,7 +45,18 @@ export function useMessagePolling(): MessageRealtimeState {
 			);
 		}
 
+		function closeSource() {
+			if (source) {
+				source.onopen = null;
+				source.onmessage = null;
+				source.onerror = null;
+				source.close();
+				source = null;
+			}
+		}
+
 		function scheduleReconnect() {
+			closeSource();
 			if (stopped || !getClientSessionToken()) return;
 			startFallbackRefresh();
 			const delay = getReconnectDelay(reconnectAttempt);
@@ -61,31 +68,27 @@ export function useMessagePolling(): MessageRealtimeState {
 			clearConnectionTimers();
 			if (stopped || !getClientSessionToken()) return;
 
-			socket = new WebSocket(getRealtimeWebSocketUrl());
-			socket.onopen = () => {
+			source = new EventSource(getRealtimeEventSourceUrl());
+			source.onopen = () => {
 				reconnectAttempt = 0;
-				heartbeatTimer = window.setInterval(() => {
-					if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
-				}, REALTIME_HEARTBEAT_INTERVAL_MS);
+				if (fallbackTimer) {
+					window.clearInterval(fallbackTimer);
+					fallbackTimer = null;
+				}
 			};
-			socket.onmessage = (message) => {
-				if (message.data === "pong" || typeof message.data !== "string") return;
+			source.onmessage = (message) => {
+				if (typeof message.data !== "string") return;
 				const event = parseNewMessageEvent(message.data);
 				if (!event) return;
 				dispatchMessagesChanged();
 				setNotification(event);
 				showBrowserNewMessageNotification(event);
 			};
-			socket.onerror = () => socket?.close();
-			socket.onclose = scheduleReconnect;
+			source.onerror = scheduleReconnect;
 		}
 
 		function restartForSessionChange() {
-			if (socket) {
-				socket.onclose = null;
-				socket.close(1000, "Session changed");
-				socket = null;
-			}
+			closeSource();
 			clearConnectionTimers();
 			reconnectAttempt = 0;
 			setNotification(null);
@@ -99,10 +102,7 @@ export function useMessagePolling(): MessageRealtimeState {
 			stopped = true;
 			window.removeEventListener(AUTH_SESSION_CHANGED_EVENT, restartForSessionChange);
 			clearConnectionTimers();
-			if (socket) {
-				socket.onclose = null;
-				socket.close(1000, "Client closed");
-			}
+			closeSource();
 		};
 	}, []);
 

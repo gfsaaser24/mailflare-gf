@@ -13,6 +13,8 @@ import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
 import type { ImapImportRequest } from "./types";
 import { parseImapImportRequest } from "./utils";
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
 	const env = getEnv();
 	const user = await requireUser(env, request);
