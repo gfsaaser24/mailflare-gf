@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { backups } from "@/db/schema";
 import { exportDatabaseRecords } from "./export";
@@ -71,7 +71,13 @@ export async function reconcileStaleBackups(env: AppEnv): Promise<number> {
 	const stale = await db
 		.update(backups)
 		.set({ status: "failed", error: "Interrupted by an app restart", completedAt: new Date() })
-		.where(and(inArray(backups.status, ["queued", "running"]), lt(backups.createdAt, cutoff)))
+		.where(
+			or(
+				and(eq(backups.status, "queued"), lt(backups.createdAt, cutoff)),
+				// A running backup is judged by when it started, not when it was requested.
+				and(eq(backups.status, "running"), lt(backups.startedAt, cutoff)),
+			),
+		)
 		.returning({ id: backups.id });
 	return stale.length;
 }
