@@ -14,7 +14,11 @@ export function proxy(request: NextRequest) {
 	const bytes = new Uint8Array(16);
 	crypto.getRandomValues(bytes);
 	const nonce = btoa(String.fromCharCode(...bytes));
-	const csp = buildContentSecurityPolicy(nonce);
+	// HOTFIX: prerendered pages ship Next inline scripts without the nonce, so a nonce +
+	// strict-dynamic policy blocks the whole app. Until every page is dynamically
+	// rendered (tracked as a follow-up), emit the policy without a nonce; it falls back
+	// to unsafe-inline for scripts and still never allows unsafe-eval in production.
+	const csp = buildContentSecurityPolicy();
 
 	const requestHeaders = new Headers(request.headers);
 	requestHeaders.set("x-nonce", nonce);
