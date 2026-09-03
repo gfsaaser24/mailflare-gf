@@ -1,0 +1,8 @@
+# CodeRabbit config. Review PRs against main and against throwaway review baselines
+# (used to get a review pass over work that already landed on main).
+reviews:
+  profile: chill
+  base_branches:
+    - "main"
+    - "baseline/.*"
+    - "review/.*"
