@@ -8,6 +8,8 @@ import { ForwardingEmailForm } from "./forwarding-email-form";
 import { MailboxSignatureForm } from "./mailbox-signature-form";
 import { ProfileForm } from "./profile-form";
 import { ProfileAvatarForm } from "./profile-avatar-form";
+import { SessionsPanel } from "./sessions-panel";
+import { TwoFactorPanel } from "./two-factor-panel";
 import type { AccountSettingsResponse } from "./types";
 import { loadAccountSettings } from "./utils";
 
@@ -48,7 +50,7 @@ export function AccountSettings() {
 		<div className="space-y-8 py-4">
 			<div>
 				<h1 className="text-3xl font-medium text-neutral-900">Account</h1>
-				<p className="mt-1 text-sm text-neutral-500">Manage your account details and sign-in password.</p>
+				<p className="mt-1 text-sm text-neutral-500">Manage your account details, sign-in password, two-factor authentication and sessions.</p>
 			</div>
 
 			<Card className="rounded-3xl border-0 bg-white px-6">
@@ -99,6 +101,26 @@ export function AccountSettings() {
 				</CardHeader>
 				<CardContent className="pb-6">
 					<ChangePasswordForm />
+				</CardContent>
+			</Card>
+
+			<Card id="security" className="rounded-3xl border-0 bg-white px-6">
+				<CardHeader>
+					<CardTitle>Two-factor authentication</CardTitle>
+					<CardDescription>Ask for a code from an authenticator app after your password.</CardDescription>
+				</CardHeader>
+				<CardContent className="pb-6">
+					<TwoFactorPanel />
+				</CardContent>
+			</Card>
+
+			<Card className="rounded-3xl border-0 bg-white px-6">
+				<CardHeader>
+					<CardTitle>Active sessions</CardTitle>
+					<CardDescription>Devices signed in to this account. Sign out any you do not recognise.</CardDescription>
+				</CardHeader>
+				<CardContent className="pb-6">
+					<SessionsPanel />
 				</CardContent>
 			</Card>
 		</div>

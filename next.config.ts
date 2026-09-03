@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
 	allowedDevOrigins: ["mail.dev"],
 	serverExternalPackages: ["postgres", "@aws-sdk/client-s3"],
 	typescript: {
-		ignoreBuildErrors: true,
+		ignoreBuildErrors: false,
 	},
 	async headers() {
 		return [

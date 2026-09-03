@@ -13,7 +13,9 @@
  * 2. `runRetention()` — the daily sweep (`scripts/retention.ts`). For each
  *    organisation it applies that organisation's windows (`./settings.ts`) to
  *    trashed messages, expired sessions, webhook deliveries, auto-reply
- *    records, outbound jobs, audit logs and resolved inbound failures.
+ *    records, outbound jobs, audit logs and resolved inbound failures. It then
+ *    runs `runGlobalRetention()` once: one-time auth tokens, expired sessions
+ *    and abandoned pending-two-factor sessions, none of which are tenant-scoped.
  *
  * Rules that must not be lost:
  * - storage is best effort, the database is not: an object that cannot be
@@ -39,6 +41,8 @@ import {
 	webhookDeliveries,
 	webhooks,
 } from "@/db/schema";
+import { PENDING_TWO_FACTOR_MS } from "@/lib/auth/session";
+import { purgeExpiredAuthTokens } from "@/lib/auth/tokens";
 import { deleteAttachmentsForMessages, sumAttachmentBytesForMessages } from "@/lib/email/attachments";
 import { releaseStorageBytes } from "@/lib/quotas/service";
 import {
@@ -330,9 +334,67 @@ export async function runRetentionForOrganization(
 	return { organizationId, settings, ...counts };
 }
 
+/**
+ * The sweeps that are not per-organisation.
+ *
+ * `auth_tokens` and `sessions` carry no `organization_id`, and both hold
+ * credential material (a SHA-256 of something that was once a live secret), so
+ * they are swept globally once per run rather than per tenant: a row whose user
+ * or organisation has already been deleted must still go.
+ */
+export type GlobalRetentionCounts = {
+	/** Spent or long-expired one-time links (reset / magic link). */
+	authTokens: number;
+	/** Session rows past `expires_at`; the token is already refused by then. */
+	expiredSessions: number;
+	/** Half-logins that never passed the TOTP step. */
+	stalePendingSessions: number;
+};
+
+const ZERO_GLOBAL: GlobalRetentionCounts = {
+	authTokens: 0,
+	expiredSessions: 0,
+	stalePendingSessions: 0,
+};
+
+/**
+ * Runs the global sweeps. Called once by `runRetention()`, after the per-tenant
+ * pass so the per-organisation counts still describe what that pass did.
+ */
+export async function runGlobalRetention(
+	env: CloudflareEnv,
+	options?: { now?: Date },
+): Promise<GlobalRetentionCounts> {
+	const db = getDb(env);
+	const now = options?.now ?? new Date();
+	const counts: GlobalRetentionCounts = { ...ZERO_GLOBAL };
+
+	counts.authTokens = await purgeExpiredAuthTokens(env, { now });
+
+	// An expired session is dead the moment `expires_at` passes: keeping the row
+	// only keeps a credential hash around, so it goes immediately.
+	counts.expiredSessions = (
+		await db.delete(sessions).where(lt(sessions.expiresAt, now)).returning({ id: sessions.id })
+	).length;
+
+	// A pending-two-factor session is minted with a 10-minute life. Anything still
+	// pending older than that window is abandoned, whatever its `expires_at` says.
+	const pendingCutoff = new Date(now.getTime() - PENDING_TWO_FACTOR_MS);
+	counts.stalePendingSessions = (
+		await db
+			.delete(sessions)
+			.where(and(eq(sessions.pendingTwoFactor, true), lt(sessions.createdAt, pendingCutoff)))
+			.returning({ id: sessions.id })
+	).length;
+
+	return counts;
+}
+
 export type RetentionRunResult = {
 	results: OrganizationRetentionResult[];
 	failures: Array<{ organizationId: string; error: string }>;
+	/** Not tenant-scoped; see `runGlobalRetention`. */
+	global: GlobalRetentionCounts;
 };
 
 /**
@@ -363,7 +425,18 @@ export async function runRetention(
 		}
 	}
 
-	return { results, failures };
+	// Global sweeps must not be skipped because one organisation failed above.
+	let global: GlobalRetentionCounts = { ...ZERO_GLOBAL };
+	try {
+		global = await runGlobalRetention(env, options);
+	} catch (error) {
+		failures.push({
+			organizationId: "*",
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+
+	return { results, failures, global };
 }
 
 export { DEFAULT_RETENTION, getRetention, setRetention, parseRetentionInput } from "./settings";

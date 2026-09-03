@@ -4,13 +4,12 @@ import { getEnv } from "@/lib/cloudflare";
 import { getDb } from "@/db";
 import { users } from "@/db/schema";
 import { verifyPassword } from "@/lib/auth/password";
-import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
+import { completeLogin } from "@/lib/auth/login-flow";
 import { loginSchema } from "@/lib/validators";
 import { allowLoginAttempt } from "@/lib/auth/rate-limit";
 import { verifyTurnstileToken } from "@/lib/auth/turnstile";
 import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
-import { recordAuthActivity } from "@/lib/auth/activity";
 
 export async function POST(request: Request) {
 	const env = getEnv();
@@ -44,20 +43,6 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: "Account disabled" }, { status: 403 });
 	}
 
-	const token = await createSession(env, user.id);
-	await recordAuthActivity(env, { action: "auth.login", userId: user.id, request });
-	// The token goes into the httpOnly cookie only; never into the body.
-	const response = NextResponse.json({
-		ok: true,
-		redirect: "/inbox",
-	});
-	response.headers.set("Cache-Control", "no-store");
-	response.cookies.set(SESSION_COOKIE, token, {
-		httpOnly: true,
-		secure: process.env.NODE_ENV === "production",
-		sameSite: "lax",
-		path: "/",
-		maxAge: 60 * 60 * 24 * 30,
-	});
-	return response;
+	// Session, cookie, activity and the two-factor gate all live in completeLogin().
+	return completeLogin(env, request, user, { method: "password" });
 }

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, integer, bigint, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { DEFAULT_ORGANIZATION_ID } from "../../lib/organizations/constants";
+import { newId } from "../../lib/ids";
 import { tsvector } from "../types";
 
 export const organizations = pgTable(
@@ -14,6 +15,8 @@ export const organizations = pgTable(
 			.notNull()
 			.default("active"),
 		notes: text("notes"),
+		/** Members of this organisation must have TOTP enrolled to keep a full session. */
+		requireTwoFactor: boolean("require_two_factor").notNull().default(false),
 		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()
 			.$defaultFn(() => new Date()),
@@ -36,6 +39,17 @@ export const users = pgTable("users", {
 	role: text("role", { enum: ["admin", "user"] }).notNull().default("user"),
 	disabled: boolean("disabled").notNull().default(false),
 	canManageMailboxes: boolean("can_manage_mailboxes").notNull().default(false),
+	/**
+	 * TOTP shared secret, encrypted at rest with `AUTH_ENCRYPTION_KEY`
+	 * (`v1.<iv>.<ct>.<tag>`, see `src/lib/auth/crypto.ts`). Never store it plain.
+	 */
+	totpSecretEncrypted: text("totp_secret_encrypted"),
+	/** Set once the user has confirmed a code; null means TOTP is not active. */
+	totpEnabledAt: timestamp("totp_enabled_at", { withTimezone: true, mode: "date" }),
+	/** JSON array of bcrypt hashes; a used code is removed from the array. */
+	totpBackupCodes: text("totp_backup_codes"),
+	/** Last password change; sessions minted before it can be treated as stale. */
+	passwordChangedAt: timestamp("password_changed_at", { withTimezone: true, mode: "date" }),
 	createdByUserId: text("created_by_user_id").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
@@ -418,10 +432,27 @@ export const calendarEvents = pgTable(
 		attendees: text("attendees").notNull().default("[]"),
 		startsAt: timestamp("starts_at", { withTimezone: true, mode: "date" }).notNull(),
 		endsAt: timestamp("ends_at", { withTimezone: true, mode: "date" }).notNull(),
+		/** All-day events ignore the clock part of `starts_at`/`ends_at`. */
+		allDay: boolean("all_day").notNull().default(false),
+		/** IANA zone the wall-clock times were entered in, e.g. `Europe/London`. */
+		timezone: text("timezone").notNull().default("UTC"),
+		/** RFC 5545 RRULE body, without the `RRULE:` prefix. Null for a single event. */
+		rrule: text("rrule"),
+		/** ICS UID; stable across exports and updates. */
+		uid: text("uid").notNull().$defaultFn(() => newId("evt")),
+		/** `private` is the owner only; `organization` is everyone in the org. */
+		visibility: text("visibility", { enum: ["private", "organization"] })
+			.notNull()
+			.default("private"),
+		/** Optional display colour, e.g. `#2563eb`. */
+		color: text("color"),
 		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
 		updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().$defaultFn(() => new Date()),
 	},
-	(t) => [index("calendar_events_user_starts_idx").on(t.userId, t.startsAt)],
+	(t) => [
+		index("calendar_events_user_starts_idx").on(t.userId, t.startsAt),
+		index("calendar_events_org_visibility_starts_idx").on(t.organizationId, t.visibility, t.startsAt),
+	],
 );
 
 export const routingRules = pgTable("routing_rules", {
@@ -511,10 +542,48 @@ export const sessions = pgTable("sessions", {
 	impersonatedOrganizationId: text("impersonated_organization_id").references(
 		() => organizations.id,
 	),
+	/**
+	 * The password step passed but the TOTP step has not. A pending session is NOT
+	 * logged in: `getUserFromSession()` refuses it, only the two-factor route may
+	 * read it (`getPendingTwoFactorSession`) and promote it.
+	 */
+	pendingTwoFactor: boolean("pending_two_factor").notNull().default(false),
+	/** Refreshed at most once every 5 minutes so the sessions list stays cheap. */
+	lastSeenAt: timestamp("last_seen_at", { withTimezone: true, mode: "date" }),
+	/** Client IP and user agent seen at login; shown in the sessions list. */
+	ipAddress: text("ip_address"),
+	userAgent: text("user_agent"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 		.notNull()
 		.$defaultFn(() => new Date()),
 });
+
+/**
+ * One-time links: password reset and magic-link sign-in.
+ *
+ * Same shape as `user_invites`: only the SHA-256 hex of the token is stored, and
+ * `used_at` is set by the atomic UPDATE that spends it (`src/lib/auth/tokens.ts`),
+ * so a token can never be redeemed twice even under a race.
+ */
+export const authTokens = pgTable(
+	"auth_tokens",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => users.id, { onDelete: "cascade" }),
+		purpose: text("purpose", { enum: ["password_reset", "magic_link"] }).notNull(),
+		tokenHash: text("token_hash").notNull().unique(),
+		expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+		usedAt: timestamp("used_at", { withTimezone: true, mode: "date" }),
+		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+			.notNull()
+			.$defaultFn(() => new Date()),
+		/** IP that asked for the link; kept so abuse can be traced. */
+		requestIp: text("request_ip"),
+	},
+	(t) => [index("auth_tokens_user_purpose_idx").on(t.userId, t.purpose)],
+);
 
 /**
  * Platform operators (T3.3, decision D2).
@@ -758,6 +827,7 @@ export const schema = {
 	webhooks,
 	webhookDeliveries,
 	sessions,
+	authTokens,
 	auditLogs,
 	backupSettings,
 	backups,

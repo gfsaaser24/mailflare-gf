@@ -36,6 +36,34 @@ surface, don't spread `process.env` reads around. `BUCKET` is an R2Bucket-like a
   `storage` container. S3 uploads only verify when addressed as `10.0.8.1:56321`.
 - sshd on the box only permits forwards to listed targets
   (`/etc/ssh/sshd_config.d/99-infrastructure-hardening.conf`); `10.0.8.1:56321/56322/56323/56329` are allowed.
+- Sessions live 30 days; only the SHA-256 of the token is stored. A login with TOTP first
+  mints a `pending_two_factor` session (10 min, refused by `getUserFromSession`). Users see
+  and revoke their own devices at `/api/auth/sessions` (list / `DELETE [id]` /
+  `revoke-others`); a password change stamps `password_changed_at` and kills every other
+  session; disabling an account kills all of them (`disableUser`).
+- One-time auth links are single use and short lived: password reset 30 min, magic link
+  15 min. Issuing a new one spends every unused link of that user+purpose
+  (`src/lib/auth/tokens.ts`).
+- TOTP is optional per user and can be required per organisation. Secrets are encrypted
+  with `AUTH_ENCRYPTION_KEY`.
+- Turnstile fails closed in production: no `TURNSTILE_SECRET_KEY` means every protected
+  request is refused (and one `console.error` at boot). In development the check is
+  skipped. `getEnv()` also warns in production when `TURNSTILE_SECRET_KEY`,
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `AUTH_ENCRYPTION_KEY` or `APP_URL` is missing — warn
+  only, so the setup wizard can still boot an unconfigured container.
+- `GET /api/health` returns `{ ok: true }` and nothing else; it is the Docker HEALTHCHECK.
+  `/api/setup/status` only discloses the primary hostname while the instance is unclaimed.
+- `TRUST_CF_HEADERS=true` only once the hostname is actually behind the Cloudflare proxy
+  and Traefik trusts Cloudflare's IP ranges — otherwise `CF-Connecting-IP` is free to
+  forge. Runbook: `docs/runbooks/cloudflare-proxy.md`.
+
+### Auth hardening env vars
+
+| Var | Notes |
+|---|---|
+| `AUTH_ENCRYPTION_KEY` | 32 bytes, base64 or hex. Encrypts TOTP secrets at rest (AES-256-GCM, `src/lib/auth/crypto.ts`). `openssl rand -base64 32`. Lose it and every enrolled user must re-enrol. |
+| `SYSTEM_EMAIL_FROM` | From address for system mail (reset, magic link). Unset = `no-reply@<primary domain>`. |
+| `TRUST_CF_HEADERS` | `true` only once Cloudflare proxies every request and the origin refuses direct traffic. It makes `CF-Connecting-IP` win in `src/lib/http/ip.ts`; that header is spoofable without CF in front, so it is opt-in. |
 
 ## Getting at the database / Studio / MCP from a laptop
 
@@ -94,7 +122,7 @@ the host cron (user `ops` on the Vultr box, `crontab -l`) calls
 | Job | Schedule | Does |
 |---|---|---|
 | `webhook-retry` | every minute | re-sends due webhook deliveries (1m/10m backoff, dead-letter after 3) |
-| `retention` | 03:30 daily | per-org retention: trash purge (reclaims storage), sessions, deliveries, audit, jobs |
+| `retention` | 03:30 daily | per-org retention: trash purge (reclaims storage), sessions, deliveries, audit, jobs. Then one global sweep: spent/expired one-time auth tokens, sessions past `expires_at`, abandoned pending-2FA sessions |
 | `reconcile-domains` | hourly | refreshes `domains.status` from live Cloudflare/DNS state |
 
 Log: `~/mailflare/cron.log` on the box.

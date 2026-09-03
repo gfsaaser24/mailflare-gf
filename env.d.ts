@@ -27,6 +27,36 @@ interface AppEnv {
 	GITHUB_UPDATE_TOKEN?: string;
 	GITHUB_UPDATE_REF?: string;
 	GITHUB_UPDATE_REPO?: string;
-	LOGIN_RATE_LIMIT?: { limit(input: { key: string }): Promise<{ success: boolean }> };
+	/** 32-byte key (base64 or hex) used to encrypt TOTP secrets at rest. */
+	AUTH_ENCRYPTION_KEY?: string;
+	/** From address for system mail (reset, magic link). Falls back to no-reply@<primary domain>. */
+	SYSTEM_EMAIL_FROM?: string;
+	/** "true" only when Cloudflare proxies every request; CF-Connecting-IP is spoofable otherwise. */
+	TRUST_CF_HEADERS?: string;
+	LOGIN_RATE_LIMIT?: RateLimiter;
+	/** Named limiters for the auth surfaces. See `src/lib/auth/rate-limit.ts`. */
+	AUTH_RATE_LIMITS?: AuthRateLimiters;
 }
+
+/** Minimal limiter surface; `createMemoryRateLimit` returns one of these. */
+interface RateLimiter {
+	limit(input: { key: string }): Promise<{ success: boolean }>;
+}
+
+interface AuthRateLimiters {
+	/** 20 per minute per IP. */
+	login: RateLimiter;
+	/** 5 per 15 minutes per IP. */
+	recovery: RateLimiter;
+	/** 3 per hour per email key. */
+	recoveryPerEmail: RateLimiter;
+	/** 5 per 15 minutes per IP. */
+	magicLink: RateLimiter;
+	/** 3 per hour per email key. */
+	magicLinkPerEmail: RateLimiter;
+	/** 5 per 5 minutes per session key. */
+	twoFactor: RateLimiter;
+}
+
+type AuthRateLimitBucket = keyof AuthRateLimiters;
 type CloudflareEnv = AppEnv;

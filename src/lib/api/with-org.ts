@@ -46,7 +46,11 @@
  *    Cookie sessions are unscoped (they get `["*"]`).
  * 3. Loads the organisation and rejects anything that is not `active` with
  *    403 `{"error":"Organisation suspended"}`.
- * 4. Calls the handler with an `OrgContext`.
+ * 4. Enforces the organisation's two-factor policy on cookie sessions: when
+ *    `organizations.require_two_factor` is set and the user has no
+ *    `totp_enabled_at`, everything answers 403 `{"error":"two_factor_required"}`
+ *    except the handful of routes needed to enrol (see `TWO_FACTOR_EXEMPT`).
+ * 5. Calls the handler with an `OrgContext`.
  *
  * ---------------------------------------------------------------------------
  * RULES FOR HANDLERS
@@ -83,6 +87,7 @@ import {
 } from "@/db/schema";
 import { authenticateApiKey, isApiAuthFailure, requireScope } from "@/lib/api/auth";
 import { SESSION_COOKIE, getUserFromSession } from "@/lib/auth/session";
+import { organizationRequiresTwoFactor } from "@/lib/auth/totp";
 import type { SessionUser } from "@/lib/auth/types";
 import { getEnv } from "@/lib/cloudflare";
 import {
@@ -169,6 +174,46 @@ function json(error: string, status: number): NextResponse {
 	return NextResponse.json({ error }, { status });
 }
 
+/**
+ * The routes a user must still reach while they are forced to enrol, otherwise
+ * the requirement would lock them out of the very screens that satisfy it.
+ *
+ * Anything under `/api/auth/two-factor` (setup, enable, status), the session
+ * endpoint the client polls, sign-out, and reading — never writing — the
+ * organisation policy.
+ */
+function isTwoFactorEnrolmentRoute(request: Request): boolean {
+	let pathname: string;
+	try {
+		pathname = new URL(request.url).pathname;
+	} catch {
+		return false;
+	}
+	// Trailing slashes are normalised away so `/api/auth/me/` cannot slip past.
+	const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+	if (path === "/api/auth/two-factor" || path.startsWith("/api/auth/two-factor/")) return true;
+	if (path === "/api/auth/me" || path === "/api/auth/logout") return true;
+	if (path === "/api/settings/security" && request.method === "GET") return true;
+	return false;
+}
+
+/**
+ * 403 when the organisation forces two-factor and this session's user has not
+ * enrolled. API keys are exempt: they are machine credentials with their own
+ * scopes and revocation, and an agent cannot type a code.
+ */
+async function twoFactorGate(
+	db: AppDatabase,
+	orgId: string,
+	request: Request,
+	session: { enrolled: boolean } | null,
+): Promise<NextResponse | null> {
+	if (!session || session.enrolled) return null;
+	if (isTwoFactorEnrolmentRoute(request)) return null;
+	if (!(await organizationRequiresTwoFactor(db, orgId))) return null;
+	return json("two_factor_required", 403);
+}
+
 /** Builds the `scoped`/`insertValues` pair for one organisation. */
 export function createOrgScope(orgId: string): Pick<OrgContext, "scoped" | "insertValues"> {
 	const scoped = <T extends TenantTable>(table: T): SQL => eq(table.organizationId, orgId);
@@ -199,6 +244,8 @@ export function withOrg<T extends RouteContext = RouteContext>(
 		const db = getDb(env);
 
 		let principal: OrgPrincipal | null = null;
+		/** Null on the API-key path; the enrolment state of the cookie session otherwise. */
+		let session: { enrolled: boolean } | null = null;
 
 		const jar = await cookies();
 		const sessionUser = await getUserFromSession(env, jar.get(SESSION_COOKIE)?.value);
@@ -206,6 +253,7 @@ export function withOrg<T extends RouteContext = RouteContext>(
 			// Disabled accounts are treated as unauthenticated, never as forbidden.
 			if (sessionUser.disabled) return json("Unauthorized", 401);
 			principal = { ...sessionUser, kind: "session", scopes: ["*"], apiKeyId: null };
+			session = { enrolled: !!sessionUser.totpEnabledAt };
 		} else if (options.allowApiKey) {
 			const auth = await authenticateApiKey(env, request.headers.get("authorization"), request);
 			// A revoked or expired key is a real key in a bad state: say so, rather
@@ -236,6 +284,9 @@ export function withOrg<T extends RouteContext = RouteContext>(
 			if (error instanceof OrganizationSuspendedError) return json(error.message, 403);
 			throw error;
 		}
+
+		const gated = await twoFactorGate(db, org.id, request, session);
+		if (gated) return gated;
 
 		const { scoped, insertValues } = createOrgScope(org.id);
 		const ctx: OrgContext = {

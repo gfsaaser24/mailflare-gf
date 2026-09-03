@@ -398,8 +398,10 @@ describe.skipIf(!hasTestDatabase())("retention (T5.2)", () => {
 		expect(orgA?.autoReplyDeliveries).toBe(1);
 		expect(orgA?.outboundJobs).toBe(1);
 
+		// The global sweep (`runGlobalRetention`) removes every expired session,
+		// so the recently expired one goes too; only the live session survives.
 		const remaining = await db.select({ id: sessions.id }).from(sessions);
-		expect(remaining.map((row) => row.id).sort()).toEqual(["ses_just_expired", "ses_live"]);
+		expect(remaining.map((row) => row.id)).toEqual(["ses_live"]);
 	});
 
 	it("deleteMessagesPermanently ignores messages of another organisation", async () => {

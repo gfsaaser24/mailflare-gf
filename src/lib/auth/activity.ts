@@ -8,6 +8,8 @@ export async function recordAuthActivity(
 		action: AuthActivityAction;
 		userId: string;
 		request: Request;
+		/** Extra fields merged into the audit metadata, e.g. `{ method: "magic_link" }`. */
+		details?: Record<string, unknown>;
 	},
 ): Promise<void> {
 	try {
@@ -15,7 +17,7 @@ export async function recordAuthActivity(
 			actorUserId: input.userId,
 			targetUserId: input.userId,
 			action: input.action,
-			metadata: getAuthActivityMetadata(input.request),
+			metadata: { ...getAuthActivityMetadata(input.request), ...(input.details ?? {}) },
 		});
 	} catch {
 		// Authentication should not fail because activity logging is unavailable.

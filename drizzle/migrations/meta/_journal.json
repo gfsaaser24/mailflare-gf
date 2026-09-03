@@ -64,6 +64,13 @@
       "when": 1788395671722,
       "tag": "0008_org_required_on_mail",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788438698627,
+      "tag": "0009_first_dragon_man",
+      "breakpoints": true
     }
   ]
 }

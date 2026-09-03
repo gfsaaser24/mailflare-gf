@@ -3,8 +3,12 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/auth/client";
+import { mustEnrolTwoFactor, type AuthMeResult } from "@/components/platform/use-auth-me";
 import type { AuthGuardProps } from "./auth-guard-types";
 import { LoadingTransition } from "@/components/loading-transition";
+
+/** Where `TwoFactorPanel` lives; `/settings` redirects here too. */
+const TWO_FACTOR_SETUP_PATH = "/settings/account";
 
 export function AuthGuard({ children, mode = "protected", requireMailbox, requireRole }: AuthGuardProps) {
 	const pathname = usePathname();
@@ -34,9 +38,17 @@ export function AuthGuard({ children, mode = "protected", requireMailbox, requir
 					return;
 				}
 
-				const data = (await response.json()) as { hasMailboxes?: boolean; isSetup?: boolean; user?: { role?: string } };
+				const data = (await response.json()) as AuthMeResult;
 				if (mode === "public") {
 					router.replace("/inbox");
+					return;
+				}
+
+				// The organisation requires two-factor and this user has not enrolled:
+				// `withOrg()` is already answering 403 for everything else, so the only
+				// useful place to be is the panel that sets it up.
+				if (mustEnrolTwoFactor(data) && !pathname.startsWith(TWO_FACTOR_SETUP_PATH)) {
+					router.replace(TWO_FACTOR_SETUP_PATH);
 					return;
 				}
 

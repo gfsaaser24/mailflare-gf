@@ -5,7 +5,7 @@ import { getDb } from "@/db";
 import { mailboxes, users } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
 import { hasAdminAccount } from "@/lib/auth/setup";
-import { createSession, SESSION_COOKIE } from "@/lib/auth/session";
+import { completeLogin } from "@/lib/auth/login-flow";
 import { newId } from "@/lib/ids";
 import { firstRunRegisterSchema } from "@/lib/validators";
 import { attachOrProvisionDomainForUser } from "@/lib/domains/service";
@@ -84,16 +84,6 @@ export async function POST(request: Request) {
 		return NextResponse.json({ error: message }, { status: 502 });
 	}
 
-	const token = await createSession(env, userId);
-	// The token goes into the httpOnly cookie only; never into the body.
-	const response = NextResponse.json({ ok: true, redirect: "/inbox" });
-	response.headers.set("Cache-Control", "no-store");
-	response.cookies.set(SESSION_COOKIE, token, {
-		httpOnly: true,
-		secure: process.env.NODE_ENV === "production",
-		sameSite: "lax",
-		path: "/",
-		maxAge: 60 * 60 * 24 * 30,
-	});
-	return response;
+	// First run: nobody can have TOTP yet, but the flow stays the same for everyone.
+	return completeLogin(env, request, { id: userId, totpEnabledAt: null }, { method: "password" });
 }

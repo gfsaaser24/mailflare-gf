@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Mail } from "lucide-react";
@@ -82,6 +83,20 @@ export function LoginClient() {
         >
           {loading ? "Signing in..." : "Sign in"}
         </Button>
+        <div className="flex flex-col gap-1 text-sm">
+          <Link
+            href="/forgot-password"
+            className="font-medium text-blue-700 hover:underline"
+          >
+            Forgot password?
+          </Link>
+          <Link
+            href="/magic-link"
+            className="font-medium text-blue-700 hover:underline"
+          >
+            Email me a sign-in link
+          </Link>
+        </div>
       </form>
     </AuthShell>
   );

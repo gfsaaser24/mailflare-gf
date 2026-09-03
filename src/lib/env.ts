@@ -16,6 +16,30 @@ function required(name: string): string {
 	return value;
 }
 
+/**
+ * Configuration that a production deployment must have, and what breaks without
+ * it. Warn, never throw: the setup wizard has to be able to boot an unconfigured
+ * container so the operator can fix it from the browser.
+ */
+const PRODUCTION_REQUIRED: Array<{ name: string; consequence: string }> = [
+	{ name: "TURNSTILE_SECRET_KEY", consequence: "sign-in and register refuse every request" },
+	{ name: "NEXT_PUBLIC_TURNSTILE_SITE_KEY", consequence: "the sign-in widget cannot render a token" },
+	{ name: "AUTH_ENCRYPTION_KEY", consequence: "TOTP secrets cannot be encrypted or read back" },
+	{ name: "APP_URL", consequence: "invite, reset and magic links are built with no origin" },
+];
+
+/** One block per process, at the first `getEnv()`. */
+function warnAboutMissingProductionConfig(e: NodeJS.ProcessEnv): void {
+	if (e.NODE_ENV !== "production") return;
+	const missing = PRODUCTION_REQUIRED.filter((entry) => !e[entry.name]?.trim());
+	if (missing.length === 0) return;
+	console.error("[env] Missing production configuration:");
+	for (const entry of missing) console.error(`[env]   - ${entry.name}: ${entry.consequence}`);
+	console.error(
+		"[env] The app still starts so the setup wizard can run; set these in the deployment environment.",
+	);
+}
+
 function buildEmailSender(): EmailSender {
 	const url = process.env.EDGE_WORKER_URL;
 	const secret = process.env.EDGE_WORKER_SECRET;
@@ -31,10 +55,12 @@ function buildEmailSender(): EmailSender {
 export function getEnv(): AppEnv {
 	if (cached) return cached;
 	const e = process.env;
+	warnAboutMissingProductionConfig(e);
 	// DB/BUCKET are left undefined when their config is missing so the setup
 	// wizard (and the health check) can still run and report what is not set.
 	const storageConfigured =
 		!!e.STORAGE_S3_ENDPOINT && !!e.STORAGE_BUCKET && !!e.STORAGE_ACCESS_KEY_ID && !!e.STORAGE_SECRET_ACCESS_KEY;
+	const loginLimiter = createMemoryRateLimit({ limit: 20, periodSeconds: 60 });
 	cached = {
 		DB: (e.DATABASE_URL ? getSharedDb() : undefined) as AppEnv["DB"],
 		BUCKET: (storageConfigured
@@ -62,7 +88,19 @@ export function getEnv(): AppEnv {
 		GITHUB_UPDATE_TOKEN: e.GITHUB_UPDATE_TOKEN,
 		GITHUB_UPDATE_REF: e.GITHUB_UPDATE_REF,
 		GITHUB_UPDATE_REPO: e.GITHUB_UPDATE_REPO,
-		LOGIN_RATE_LIMIT: createMemoryRateLimit({ limit: 20, periodSeconds: 60 }),
+		AUTH_ENCRYPTION_KEY: e.AUTH_ENCRYPTION_KEY,
+		SYSTEM_EMAIL_FROM: e.SYSTEM_EMAIL_FROM,
+		TRUST_CF_HEADERS: e.TRUST_CF_HEADERS,
+		LOGIN_RATE_LIMIT: loginLimiter,
+		AUTH_RATE_LIMITS: {
+			// `login` is the same limiter as LOGIN_RATE_LIMIT so the two names cannot drift.
+			login: loginLimiter,
+			recovery: createMemoryRateLimit({ limit: 5, periodSeconds: 15 * 60 }),
+			recoveryPerEmail: createMemoryRateLimit({ limit: 3, periodSeconds: 60 * 60 }),
+			magicLink: createMemoryRateLimit({ limit: 5, periodSeconds: 15 * 60 }),
+			magicLinkPerEmail: createMemoryRateLimit({ limit: 3, periodSeconds: 60 * 60 }),
+			twoFactor: createMemoryRateLimit({ limit: 5, periodSeconds: 5 * 60 }),
+		},
 	};
 	return cached;
 }

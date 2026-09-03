@@ -6,9 +6,10 @@ import { withOrg } from "@/lib/api/with-org";
 // the console nav has to know whether to show the "Platform" link, and this is
 // the only session endpoint the client already calls on every page.
 import { isPlatformOperator } from "@/lib/platform/guard";
+import { organizationRequiresTwoFactor } from "@/lib/auth/totp";
 import { hasPrimaryDomain, userHasMailboxes } from "@/lib/user";
 
-export const GET = withOrg(async ({ db, env, user, scoped }) => {
+export const GET = withOrg(async ({ db, env, user, orgId, scoped }) => {
 	// Read-only: the session user is re-read inside the request's organisation,
 	// so a user row that does not belong to it can never be returned.
 	const [row] = await db
@@ -21,6 +22,7 @@ export const GET = withOrg(async ({ db, env, user, scoped }) => {
 			role: users.role,
 			canManageMailboxes: users.canManageMailboxes,
 			avatarKey: users.avatarKey,
+			totpEnabledAt: users.totpEnabledAt,
 		})
 		.from(users)
 		.where(and(scoped(users), eq(users.id, user.id)))
@@ -38,6 +40,15 @@ export const GET = withOrg(async ({ db, env, user, scoped }) => {
 		} catch {
 			// Session validity must not depend on the platform table being present.
 		}
+	}
+
+	// The client uses this to send a user who must enrol to the settings panel;
+	// `withOrg()` is what actually blocks the rest of the API.
+	let requiredByOrganization = false;
+	try {
+		requiredByOrganization = await organizationRequiresTwoFactor(db, orgId);
+	} catch {
+		// A policy read that fails must not invalidate the session.
 	}
 
 	let hasMailboxes = false;
@@ -67,5 +78,9 @@ export const GET = withOrg(async ({ db, env, user, scoped }) => {
 		},
 		hasMailboxes,
 		isSetup,
+		twoFactor: {
+			enabled: !!row.totpEnabledAt,
+			requiredByOrganization,
+		},
 	});
 });
