@@ -81,5 +81,26 @@ touches inbound/outbound mail, hit `/api/edge/inbound` on the deployed app and c
 
 ## Roadmap
 
-Next: organisations/teams, issuing mail accounts to other people, quotas, agent API.
-Spec: https://claude.ai/code/artifact/7c4e1fd0-7c59-4618-b147-34c166e0ac4e
+Design record: `docs/specs/control-plane.md` (all waves shipped). Next candidates: platform-plane audit
+endpoint, per-org DB export, Maillayer transport if Cloudflare sending ever limits us.
+
+## Scheduled jobs
+
+The image ships only the built app, so `scripts/*.ts` are for local/dev use. In production
+the host cron (user `ops` on the Vultr box, `crontab -l`) calls
+`POST https://mail.easyserver.net/api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`
+(secret in `.secrets/cron.env`, `~/mailflare/cron.env` on the box, and the Coolify env):
+
+| Job | Schedule | Does |
+|---|---|---|
+| `webhook-retry` | every minute | re-sends due webhook deliveries (1m/10m backoff, dead-letter after 3) |
+| `retention` | 03:30 daily | per-org retention: trash purge (reclaims storage), sessions, deliveries, audit, jobs |
+| `reconcile-domains` | hourly | refreshes `domains.status` from live Cloudflare/DNS state |
+
+Log: `~/mailflare/cron.log` on the box.
+
+## Control plane status (2026-09-02)
+
+`docs/specs/control-plane.md` is fully implemented (waves 0–6): security fixes, conversations,
+organisations + `withOrg()`, platform console, provisioning/status, quotas, retention, invites,
+v1 agent API (`docs/openapi.yaml`), webhooks. 203 tests (`npm test`, needs the tunnel).

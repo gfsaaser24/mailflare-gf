@@ -1,6 +1,6 @@
 # Mailflare control plane — build spec / task list
 
-Status: **ready to execute**. Last updated 2026-09-02.
+Status: **implemented** (all waves shipped 2026-09-02; kept as the design record).
 Stack assumed: the post-pivot stack in `CLAUDE.md` (Node + Supabase Postgres on supascale, Supabase Storage → R2, thin Cloudflare edge worker). Anything referring to D1/Workers is obsolete.
 
 Goal: turn mailflare-gf into an email control system for our own use. One platform console for Gabe, isolated organisations (clients/teams) underneath, mail accounts issued to other people, quotas, and an API an agent can actually drive. Fix the live security holes first.
