@@ -32,6 +32,14 @@ function loadTurnstileScript(): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const script = document.createElement("script");
 		script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+		// The CSP is `'nonce-…' 'strict-dynamic'` (src/lib/security/headers.ts), which
+		// makes the `https://challenges.cloudflare.com` allowlist entry a CSP2-only
+		// fallback. Copy the nonce off one of Next's own script tags so the tag is
+		// trusted under CSP3 too. Browsers hide the nonce *attribute* but keep the
+		// `.nonce` IDL property readable from same-origin script, which is exactly
+		// what this reads.
+		const nonce = document.querySelector<HTMLScriptElement>("script[nonce]")?.nonce;
+		if (nonce) script.nonce = nonce;
 		script.async = true;
 		script.defer = true;
 		script.dataset.turnstile = "true";

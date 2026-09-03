@@ -13,6 +13,19 @@ const geistMono = Geist_Mono({
 	subsets: ["latin"],
 });
 
+/**
+ * Every HTML document must be rendered per request. The CSP built in
+ * `src/proxy.ts` uses a per-request nonce + `'strict-dynamic'`, and Next can
+ * only stamp that nonce onto its own inline bootstrap scripts
+ * (`self.__next_f.push(...)`) while it is rendering *for a request*. A
+ * prerendered page would ship those scripts nonce-less at build time and the
+ * browser would block them, which takes the whole app down.
+ *
+ * Declaring it on the root layout covers every route group; `next build` must
+ * report zero `○ (Static)` pages.
+ */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
 	title: "Mailflare",
 	description: "Multi-tenant email on Cloudflare",

@@ -14,11 +14,11 @@ export function proxy(request: NextRequest) {
 	const bytes = new Uint8Array(16);
 	crypto.getRandomValues(bytes);
 	const nonce = btoa(String.fromCharCode(...bytes));
-	// HOTFIX: prerendered pages ship Next inline scripts without the nonce, so a nonce +
-	// strict-dynamic policy blocks the whole app. Until every page is dynamically
-	// rendered (tracked as a follow-up), emit the policy without a nonce; it falls back
-	// to unsafe-inline for scripts and still never allows unsafe-eval in production.
-	const csp = buildContentSecurityPolicy();
+	// Safe because `src/app/layout.tsx` sets `export const dynamic = "force-dynamic"`,
+	// so no HTML page is prerendered and every inline script Next injects is stamped
+	// with this request's nonce. If a page ever becomes static again its bootstrap
+	// scripts would ship nonce-less and the browser would block them.
+	const csp = buildContentSecurityPolicy(nonce);
 
 	const requestHeaders = new Headers(request.headers);
 	requestHeaders.set("x-nonce", nonce);
