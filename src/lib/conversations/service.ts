@@ -80,6 +80,8 @@ function counterparties(
 export type ConversationRow = typeof conversations.$inferSelect;
 
 type ResolveInboundInput = {
+	/** The organisation the mailbox belongs to; stamped on any conversation created. */
+	organizationId: string;
 	mailboxId: string;
 	subject: string | null;
 	fromAddr: string | null;
@@ -113,6 +115,7 @@ export async function resolveConversationForInbound(
 	if (bySubject) return bySubject;
 
 	return createConversation(db, {
+		organizationId: input.organizationId,
 		mailboxId: input.mailboxId,
 		subject: input.subject,
 		createdAt: input.receivedAt ?? new Date(),
@@ -120,6 +123,8 @@ export async function resolveConversationForInbound(
 }
 
 type ResolveOutboundInput = {
+	/** The organisation the mailbox belongs to; stamped on any conversation created. */
+	organizationId: string;
 	mailboxId: string;
 	subject: string | null;
 	fromAddr: string | null;
@@ -152,6 +157,7 @@ export async function resolveConversationForOutbound(
 		const target =
 			conversation ??
 			(await createConversation(db, {
+				organizationId: input.organizationId,
 				mailboxId: input.mailboxId,
 				subject: input.subject,
 				createdAt: input.sentAt ?? new Date(),
@@ -179,6 +185,7 @@ export async function resolveConversationForOutbound(
 	const conversation =
 		bySubject ??
 		(await createConversation(db, {
+			organizationId: input.organizationId,
 			mailboxId: input.mailboxId,
 			subject: input.subject,
 			createdAt: input.sentAt ?? new Date(),
@@ -237,12 +244,13 @@ export async function deleteConversationIfEmpty(db: AppDatabase, conversationId:
 
 async function createConversation(
 	db: AppDatabase,
-	input: { mailboxId: string; subject: string | null; createdAt: Date },
+	input: { organizationId: string; mailboxId: string; subject: string | null; createdAt: Date },
 ): Promise<ConversationRow> {
 	const [row] = await db
 		.insert(conversations)
 		.values({
 			id: newId("cnv"),
+			organizationId: input.organizationId,
 			mailboxId: input.mailboxId,
 			subject: input.subject,
 			subjectNormalized: normalizeSubject(input.subject),

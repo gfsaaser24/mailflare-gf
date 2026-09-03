@@ -30,6 +30,7 @@ export const POST = v1Route(
 				userId: ctx.user.id,
 				from,
 				mailboxId: input.mailboxId,
+				organizationId: ctx.orgId,
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Mailbox is not authorized";

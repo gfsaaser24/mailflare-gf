@@ -291,6 +291,47 @@ describe.skipIf(!hasTestDatabase())("webhooks (T6.3)", () => {
 		expect(untouched?.attempts).toBe(1);
 	});
 
+	it("two overlapping retry runs deliver each due row exactly once", async () => {
+		vi.stubGlobal("fetch", respondWith(500));
+		const db = createDb();
+
+		// Six pending rows, all due: enough for both runs to reach for the batch.
+		const dueIds: string[] = [];
+		for (let i = 0; i < 6; i += 1) {
+			const [id] = await emitWebhookEvent(db, {
+				orgId: ORG_A,
+				userId: USER_A,
+				type: "message.inbound",
+				data: { ...INBOUND, messageId: `msg_concurrent_${i}` },
+			});
+			if (id) dueIds.push(id);
+		}
+		expect(dueIds).toHaveLength(6);
+		for (const id of dueIds) await makeDue(id);
+
+		vi.stubGlobal("fetch", respondWith(200));
+		const env = { DB: db } as unknown as CloudflareEnv;
+		const [first, second] = await Promise.all([
+			retryDueDeliveries(env),
+			retryDueDeliveries(env),
+		]);
+
+		// Every row was claimed by exactly one of the two runs.
+		expect(first.processed + second.processed).toBe(dueIds.length);
+		expect(fetchMock()).toHaveBeenCalledTimes(dueIds.length);
+
+		const sent = fetchMock().mock.calls.map(
+			(_call, index) => headersOf(index)["x-mailflare-delivery"],
+		);
+		expect(sent.every((id) => urlOf(sent.indexOf(id)) === HOOK_A_URL)).toBe(true);
+		for (const id of dueIds) {
+			expect(sent.filter((seen) => seen === id)).toHaveLength(1);
+			const row = await deliveryRow(id);
+			expect(row?.status).toBe("delivered");
+			expect(row?.attempts).toBe(2);
+		}
+	});
+
 	it("dead-letters a delivery after three failed attempts", async () => {
 		vi.stubGlobal("fetch", respondWith(500));
 		const db = createDb();

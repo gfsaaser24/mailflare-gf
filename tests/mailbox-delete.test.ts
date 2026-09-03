@@ -4,6 +4,7 @@ import type { AppDatabase } from "@/db";
 import { schema } from "@/db";
 import { deleteMailbox, MailboxCloudflareCleanupError } from "@/lib/mailboxes/delete";
 import { createDb, hasTestDatabase } from "./helpers/db";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 const cloudflare = vi.hoisted(() => ({
 	listEmailRoutingRules: vi.fn(),
@@ -106,6 +107,7 @@ async function seed(db: AppDatabase, options?: { useAllDomains?: boolean }): Pro
 	await db.insert(schema.messages).values([
 		{
 			id: "m-1",
+			organizationId: DEFAULT_ORGANIZATION_ID,
 			userId: "u-1",
 			mailboxId: "mb-1",
 			direction: "inbound",
@@ -115,6 +117,7 @@ async function seed(db: AppDatabase, options?: { useAllDomains?: boolean }): Pro
 		},
 		{
 			id: "m-2",
+			organizationId: DEFAULT_ORGANIZATION_ID,
 			userId: "u-1",
 			mailboxId: "mb-1",
 			direction: "inbound",
@@ -125,6 +128,7 @@ async function seed(db: AppDatabase, options?: { useAllDomains?: boolean }): Pro
 		{
 			// Not on this mailbox: must survive.
 			id: "m-3",
+			organizationId: DEFAULT_ORGANIZATION_ID,
 			userId: "u-1",
 			mailboxId: null,
 			direction: "outbound",

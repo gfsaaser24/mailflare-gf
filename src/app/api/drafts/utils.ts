@@ -4,6 +4,7 @@ import type { DraftPayload } from "./types";
 export async function getDraftSender(
 	env: CloudflareEnv,
 	userId: string,
+	orgId: string,
 	input: DraftPayload,
 ): Promise<{ fromAddr: string; mailboxId: string } | { error: string }> {
 	try {
@@ -11,6 +12,7 @@ export async function getDraftSender(
 			userId,
 			from: input.from ?? "",
 			mailboxId: input.mailboxId,
+			organizationId: orgId,
 		});
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : "Mailbox is not authorized" };

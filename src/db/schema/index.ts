@@ -244,7 +244,6 @@ export const conversations = pgTable(
 		id: text("id").primaryKey(),
 		organizationId: text("organization_id")
 			.notNull()
-			.default(DEFAULT_ORGANIZATION_ID)
 			.references(() => organizations.id),
 		mailboxId: text("mailbox_id")
 			.notNull()
@@ -292,7 +291,6 @@ export const messages = pgTable(
 		id: text("id").primaryKey(),
 		organizationId: text("organization_id")
 			.notNull()
-			.default(DEFAULT_ORGANIZATION_ID)
 			.references(() => organizations.id),
 		userId: text("user_id")
 			.notNull()
@@ -312,6 +310,8 @@ export const messages = pgTable(
 		read: boolean("read").notNull().default(false),
 		starred: boolean("starred").notNull().default(false),
 		snoozedUntil: timestamp("snoozed_until", { withTimezone: true, mode: "date" }),
+		/** When the message was moved to `status = 'trash'`; drives the retention purge. */
+		trashedAt: timestamp("trashed_at", { withTimezone: true, mode: "date" }),
 		threadId: text("thread_id"),
 		conversationId: text("conversation_id").references(() => conversations.id, { onDelete: "set null" }),
 		// RFC 5322 threading headers, verbatim (angle brackets included).

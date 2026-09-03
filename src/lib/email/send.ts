@@ -29,11 +29,11 @@ export type SendEmailInput = {
 
 export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Promise<{ messageId: string }> {
 	const db = getDb(env);
-	const sender = await getAuthorizedSenderAddress(env, input);
 	const attachments = input.attachments ?? [];
 	// Quotas (T5.1): the per-attachment ceiling is known before anything is written;
 	// the daily send counter is booked right before the transport call below.
 	const organizationId = await getUserOrganizationId(db, input.userId);
+	const sender = await getAuthorizedSenderAddress(env, { ...input, organizationId });
 	const quota = await getOrganizationQuota(db, organizationId);
 	validateAttachments(attachments, quota);
 	await upsertContactFromAddress(env, {
@@ -45,6 +45,7 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 	const snippet = buildSnippet(input.text ?? null, input.html ?? null);
 	const sentAt = new Date();
 	const thread = await resolveConversationForOutbound(db, {
+		organizationId,
 		mailboxId: sender.mailboxId,
 		subject: input.subject,
 		fromAddr: sender.fromAddr,
@@ -61,6 +62,7 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 
 	await db.insert(messages).values({
 		id: messageId,
+		organizationId,
 		userId: input.userId,
 		mailboxId: sender.mailboxId,
 		direction: "outbound",

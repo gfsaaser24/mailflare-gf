@@ -8,6 +8,7 @@ import {
 	retryInboundFailure,
 } from "@/lib/inbound-failures/service";
 import { createDb, hasTestDatabase } from "./helpers/db";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 const EML = [
 	"Message-ID: <idempotency-test@example.org>",
@@ -157,6 +158,7 @@ describe.skipIf(!hasTestDatabase())("inbound idempotency", () => {
 	it("rejects a duplicate inbound row at the database level", async () => {
 		const db = createDb();
 		const values = {
+			organizationId: DEFAULT_ORGANIZATION_ID,
 			userId: "usr_test",
 			mailboxId: "mbx_test",
 			direction: "inbound" as const,

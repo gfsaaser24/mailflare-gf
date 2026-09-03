@@ -1,25 +1,23 @@
 import { NextResponse } from "next/server";
-import { withOrg } from "@/lib/api/with-org";
-import { sendEmailSchema } from "@/lib/validators";
-import { sendEmail } from "@/lib/email/send";
-import { decodeBase64Content } from "@/lib/email/attachments";
-import { readJsonBody } from "@/lib/http/request";
-import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { getSendErrorStatus } from "@/app/api/send/error-utils";
+import { decodeBase64Content } from "@/lib/email/attachments";
+import { sendEmail } from "@/lib/email/send";
+import { sendEmailSchema } from "@/lib/validators";
+import { readV1Json, v1Error, v1Route } from "../route-helpers";
 
-export const POST = withOrg(
+/**
+ * `POST /api/v1/send` — send a new message.
+ *
+ * Declared with `v1Route` like every other v1 route, so it shares the per-key
+ * rate limit and the `{ error, code }` error shape.
+ */
+export const POST = v1Route(
 	async ({ env, user }, request) => {
-		let body: unknown;
-		try {
-			body = await readJsonBody(request, 30 * 1024 * 1024);
-		} catch (error) {
-			const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
-			return NextResponse.json({ error: "Invalid send request" }, { status });
-		}
-		const parsed = sendEmailSchema.safeParse(body);
-		if (!parsed.success) {
-			return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
-		}
+		const json = await readV1Json(request, 30 * 1024 * 1024);
+		if ("response" in json) return json.response;
+
+		const parsed = sendEmailSchema.safeParse(json.body);
+		if (!parsed.success) return v1Error("Invalid send request", 400, "invalid_body");
 
 		try {
 			const { attachments, ...fields } = parsed.data;
@@ -34,10 +32,10 @@ export const POST = withOrg(
 				})),
 			});
 			return NextResponse.json(result);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : "Send failed";
-			return NextResponse.json({ error: message }, { status: getSendErrorStatus(message) });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Send failed";
+			return v1Error(message, getSendErrorStatus(message), "send_failed");
 		}
 	},
-	{ allowApiKey: true, requiredScope: "send" },
+	{ requiredScope: "send" },
 );

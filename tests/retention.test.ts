@@ -136,6 +136,8 @@ type MessageOptions = {
 	mailboxId: string;
 	status: string;
 	createdAt: Date;
+	/** When it entered the trash; defaults to `createdAt` for trashed messages. */
+	trashedAt?: Date;
 	/** Raw object body; its length is the stored size. */
 	raw?: string;
 	/** Attachment object bodies. */
@@ -163,6 +165,7 @@ async function insertMessage(bucket: FakeBucket, options: MessageOptions): Promi
 		toAddr: "inbox@retention.test",
 		rawR2Key: rawKey,
 		status: options.status,
+		trashedAt: options.trashedAt ?? (options.status === "trash" ? options.createdAt : null),
 		createdAt: options.createdAt,
 	});
 
@@ -288,6 +291,31 @@ describe.skipIf(!hasTestDatabase())("retention (T5.2)", () => {
 			.from(messageAttachments)
 			.where(eq(messageAttachments.messageId, "msg_old"));
 		expect(attachments).toHaveLength(0);
+	});
+
+	it("keeps an old message that was trashed today: the window is time in trash", async () => {
+		const db = createDb();
+		const bucket = createFakeBucket();
+		const env = createFakeEnv(db, bucket);
+
+		const bytes = await insertMessage(bucket, {
+			id: "msg_old_but_freshly_trashed",
+			organizationId: ORG_A,
+			userId: USER_A,
+			mailboxId: MAILBOX_A,
+			status: "trash",
+			createdAt: daysAgo(40),
+			trashedAt: new Date(),
+			raw: "q".repeat(40),
+		});
+		await bookStorage(ORG_A, bytes);
+
+		const { results, failures } = await runRetention(env);
+		expect(failures).toEqual([]);
+		expect(results.find((result) => result.organizationId === ORG_A)?.messages).toBe(0);
+		expect(await messageIds(ORG_A)).toEqual(["msg_old_but_freshly_trashed"]);
+		expect(bucket.store.has("stub/mail/inbound/msg_old_but_freshly_trashed.eml")).toBe(true);
+		expect(await storageBytesOf(ORG_A)).toBe(bytes);
 	});
 
 	it("respects each organisation's own trash window", async () => {

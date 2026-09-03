@@ -29,7 +29,7 @@ export const GET = withOrg(async ({ db, user, scoped }, request) => {
 	return NextResponse.json({ drafts: rows });
 });
 
-export const POST = withOrg(async ({ env, db, user, insertValues }, request) => {
+export const POST = withOrg(async ({ env, db, user, orgId, insertValues }, request) => {
 	let input: DraftPayload;
 	try {
 		input = await readJsonBody<DraftPayload>(request, 1024 * 1024);
@@ -37,7 +37,7 @@ export const POST = withOrg(async ({ env, db, user, insertValues }, request) => 
 		const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
 		return NextResponse.json({ error: "Invalid draft request" }, { status });
 	}
-	const sender = await getDraftSender(env, user.id, input);
+	const sender = await getDraftSender(env, user.id, orgId, input);
 	if ("error" in sender) {
 		return NextResponse.json({ error: sender.error }, { status: 403 });
 	}

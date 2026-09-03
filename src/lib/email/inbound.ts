@@ -142,6 +142,7 @@ export async function processInboundMessage(
 	const receivedAt = parsed.date ?? new Date();
 	const references = mergeReferences(parsed.references, parsed.inReplyTo);
 	const conversation = await resolveConversationForInbound(db, {
+		organizationId,
 		mailboxId: decision.mailbox.mailboxId,
 		subject: parsed.subject,
 		fromAddr,
@@ -154,6 +155,7 @@ export async function processInboundMessage(
 	try {
 		await db.insert(messages).values({
 			id: messageId,
+			organizationId,
 			userId: decision.mailbox.userId,
 			mailboxId: decision.mailbox.mailboxId,
 			folderId: destination.folderId,
@@ -167,6 +169,7 @@ export async function processInboundMessage(
 			htmlBody: parsed.html,
 			rawR2Key: payload.rawR2Key,
 			status: destination.status,
+			trashedAt: destination.status === "trash" ? receivedAt : null,
 			threadId: parsed.messageId,
 			conversationId: conversation.id,
 			inReplyTo: parsed.inReplyTo,

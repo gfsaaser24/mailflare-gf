@@ -18,7 +18,7 @@ export const GET = withOrg(async ({ db, user, orgId, scoped }, request) => {
 		}
 		conditions.push(eq(messages.mailboxId, mailboxId));
 	} else {
-		const accessibleMailboxIds = await listAccessibleMailboxIds(db, user);
+		const accessibleMailboxIds = await listAccessibleMailboxIds(db, user, orgId);
 		if (accessibleMailboxIds.length > 0) {
 			conditions.push(inArray(messages.mailboxId, accessibleMailboxIds));
 		} else {

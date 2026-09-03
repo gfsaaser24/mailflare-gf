@@ -57,6 +57,13 @@
       "when": 1788393277458,
       "tag": "0007_retention_invites_webhooks_search",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788395671722,
+      "tag": "0008_org_required_on_mail",
+      "breakpoints": true
     }
   ]
 }

@@ -30,7 +30,7 @@ export const GET = withOrg(async (ctx, request) => {
 		}
 		mailboxIds = [query.mailboxId];
 	} else {
-		mailboxIds = await listAccessibleMailboxIds(ctx.db, ctx.user);
+		mailboxIds = await listAccessibleMailboxIds(ctx.db, ctx.user, ctx.orgId);
 	}
 
 	const page = await listConversations(ctx.db, {

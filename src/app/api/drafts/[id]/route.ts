@@ -39,7 +39,7 @@ export const PATCH = withOrg(async (ctx, request, { params }: DraftRouteParams) 
 	if (!userOwnsDraft(draft, user.id)) {
 		return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 	}
-	const sender = await getDraftSender(env, user.id, input);
+	const sender = await getDraftSender(env, user.id, ctx.orgId, input);
 	if ("error" in sender) {
 		return NextResponse.json({ error: sender.error }, { status: 403 });
 	}

@@ -23,7 +23,7 @@ export const GET = withOrg(async ({ env, db, user, orgId, scoped }, request) => 
 	const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 100);
 	const offset = Math.max(Number(url.searchParams.get("offset") ?? 0), 0);
 
-	const accessibleMailboxes = await listAccessibleMailboxes(db, user);
+	const accessibleMailboxes = await listAccessibleMailboxes(db, user, orgId);
 	const accessibleMailboxIds = accessibleMailboxes.map((mailbox) => mailbox.id);
 	const conditions: SQL[] = [];
 	if (mailboxId) {

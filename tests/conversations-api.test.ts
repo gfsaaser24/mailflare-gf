@@ -17,6 +17,7 @@ import {
 } from "@/db/schema";
 import { SESSION_COOKIE, createSession } from "@/lib/auth/session";
 import { createDb, hasTestDatabase } from "./helpers/db";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 /** Cookie jar backing the mocked `next/headers`. */
 const cookieJar = new Map<string, string>();
@@ -115,6 +116,7 @@ async function seedConversation(options: {
 	const mailboxId = options.mailboxId ?? SHARED_MAILBOX;
 	await db.insert(conversations).values({
 		id: options.id,
+		organizationId: DEFAULT_ORGANIZATION_ID,
 		mailboxId,
 		subject: options.subject,
 		subjectNormalized: options.subject.toLowerCase(),
@@ -124,6 +126,7 @@ async function seedConversation(options: {
 	});
 	await db.insert(messages).values({
 		id: `msg_${options.id}`,
+		organizationId: DEFAULT_ORGANIZATION_ID,
 		userId: options.ownerUserId ?? OWNER,
 		mailboxId,
 		conversationId: options.id,
@@ -304,6 +307,7 @@ describe.skipIf(!hasTestDatabase())("conversation API (T2.2)", () => {
 		const db = createDb();
 		await db.insert(messages).values({
 			id: "msg_reply",
+			organizationId: DEFAULT_ORGANIZATION_ID,
 			userId: OWNER,
 			mailboxId: SHARED_MAILBOX,
 			conversationId: "cnv_detail",

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { domains, mailboxes, users } from "@/db/schema";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
@@ -11,6 +11,8 @@ export async function getAuthorizedSenderAddress(
 		userId: string;
 		from: string;
 		mailboxId?: string | null;
+		/** The caller's organisation: a mailbox in another org is treated as missing. */
+		organizationId: string;
 	},
 ): Promise<{ fromAddr: string; mailboxId: string }> {
 	if (!input.mailboxId) throw new Error("Mailbox is required");
@@ -27,14 +29,14 @@ export async function getAuthorizedSenderAddress(
 		})
 		.from(mailboxes)
 		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
-		.where(eq(mailboxes.id, input.mailboxId))
+		.where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.organizationId, input.organizationId)))
 		.limit(1);
 
 	if (!mailbox) throw new Error("Mailbox not found");
 	const [actor] = await db.select().from(users).where(eq(users.id, input.userId)).limit(1);
 	if (!actor || actor.disabled) throw new Error("Sender account not found");
 
-	const access = await getMailboxAccessLevel(db, actor, mailbox.id);
+	const access = await getMailboxAccessLevel(db, actor, mailbox.id, input.organizationId);
 	if (!access?.canSendOnBehalf) {
 		throw new Error("You do not have permission to send from this mailbox");
 	}

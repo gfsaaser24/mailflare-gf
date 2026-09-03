@@ -36,7 +36,11 @@ export const POST = withOrg(
 
 		await db
 			.update(messages)
-			.set({ status: payload.status })
+			.set({
+				status: payload.status,
+				// Retention purges by time in trash, not by message age.
+				trashedAt: payload.status === "trash" ? new Date() : null,
+			})
 			.where(and(scoped(messages), eq(messages.id, messageId)));
 		await createAuditLog(env, {
 			actorUserId: user.id,

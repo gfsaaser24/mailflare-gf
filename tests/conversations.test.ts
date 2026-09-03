@@ -7,6 +7,7 @@ import { normalizeSubject, parseMessageIdList } from "@/lib/conversations/servic
 import { processInboundMessage, storeRawToR2 } from "@/lib/email/inbound";
 import { sendEmail } from "@/lib/email/send";
 import { createDb, hasTestDatabase } from "./helpers/db";
+import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 
 const MAILBOX_ADDRESS = "box@conversation-test.example";
 
@@ -306,6 +307,7 @@ describe.skipIf(!hasTestDatabase())("conversation backfill", () => {
 	it("groups pre-existing messages by mailbox and normalised subject", async () => {
 		const db = createDb();
 		const base = {
+			organizationId: DEFAULT_ORGANIZATION_ID,
 			userId: "usr_test",
 			mailboxId: "mbx_test",
 			direction: "inbound" as const,
@@ -340,8 +342,21 @@ describe.skipIf(!hasTestDatabase())("conversation backfill", () => {
 		// The rows must look like pre-migration data.
 		await db.update(messages).set({ conversationId: null });
 
-		for (const statement of backfillStatements()) {
-			await db.execute(sql.raw(statement));
+		// `conversations.organization_id` did not exist when 0002 was written and
+		// lost its default in 0008, so hand the default back for the replay only.
+		await db.execute(
+			sql.raw(
+				`ALTER TABLE "conversations" ALTER COLUMN "organization_id" SET DEFAULT '${DEFAULT_ORGANIZATION_ID}'`,
+			),
+		);
+		try {
+			for (const statement of backfillStatements()) {
+				await db.execute(sql.raw(statement));
+			}
+		} finally {
+			await db.execute(
+				sql.raw(`ALTER TABLE "conversations" ALTER COLUMN "organization_id" DROP DEFAULT`),
+			);
 		}
 
 		const rows = await db.select().from(messages).orderBy(asc(messages.id));

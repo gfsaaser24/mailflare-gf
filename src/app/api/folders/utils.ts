@@ -8,7 +8,7 @@ import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
  * organisation: a mailbox in another org is treated as missing.
  */
 export async function getMailboxFolderAccess(ctx: OrgContext, mailboxId: string) {
-	const access = await getMailboxAccessLevel(ctx.db, ctx.user, mailboxId);
+	const access = await getMailboxAccessLevel(ctx.db, ctx.user, mailboxId, ctx.orgId);
 	if (!access?.canRead) return null;
 	if (access.mailbox.organizationId !== ctx.orgId) return null;
 	return { mailboxId: access.mailbox.id, mailboxUserId: access.mailbox.userId, canManage: access.canManage };

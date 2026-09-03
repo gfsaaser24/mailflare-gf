@@ -180,7 +180,12 @@ const ZERO_COUNTS: RetentionCounts = {
 	inboundFailures: 0,
 };
 
-/** Trashed messages past the window, through the one delete path. */
+/**
+ * Trashed messages past the window, through the one delete path.
+ *
+ * The window is time spent IN the trash (`trashed_at`), not the age of the
+ * message: something old that was trashed today must survive.
+ */
 async function sweepTrashedMessages(
 	env: CloudflareEnv,
 	db: AppDatabase,
@@ -194,7 +199,8 @@ async function sweepTrashedMessages(
 			and(
 				eq(messages.organizationId, organizationId),
 				eq(messages.status, "trash"),
-				lt(messages.createdAt, cutoff),
+				isNotNull(messages.trashedAt),
+				lt(messages.trashedAt, cutoff),
 			),
 		);
 	if (stale.length === 0) return { ...NO_DELETIONS };

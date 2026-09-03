@@ -18,26 +18,21 @@ export function hasMailboxPermission(permission: MailboxPermission, required: Ma
 /**
  * Access one user has to one mailbox.
  *
- * `orgId` is the caller's organisation (`ctx.orgId` from `withOrg`): pass it and a
+ * `orgId` is the caller's organisation (`ctx.orgId` from `withOrg`) and is required: a
  * mailbox in another organisation is treated as missing, which also stops a stray
  * `mailbox_access` row (that table has no `organization_id`) from granting access
- * across organisations. It is optional only while routes are still being migrated.
+ * across organisations.
  */
 export async function getMailboxAccessLevel(
 	db: AppDatabase,
 	user: Pick<SessionUser, "id" | "role">,
 	mailboxId: string,
-	orgId?: string,
+	orgId: string,
 ): Promise<MailboxAccessLevel | null> {
 	const [mailbox] = await db
 		.select()
 		.from(mailboxes)
-		.where(
-			and(
-				eq(mailboxes.id, mailboxId),
-				...(orgId ? [eq(mailboxes.organizationId, orgId)] : []),
-			),
-		)
+		.where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.organizationId, orgId)))
 		.limit(1);
 	if (!mailbox || mailbox.disabled) return null;
 
@@ -55,13 +50,13 @@ export async function getMailboxAccessLevel(
 	return null;
 }
 
-/** Every mailbox a user can open. Pass `orgId` to keep the list inside one organisation. */
+/** Every mailbox a user can open, inside the caller's organisation (`ctx.orgId`). */
 export async function listAccessibleMailboxes(
 	db: AppDatabase,
 	user: Pick<SessionUser, "id" | "email" | "role">,
-	orgId?: string,
+	orgId: string,
 ) {
-	const inOrg = orgId ? [eq(mailboxes.organizationId, orgId)] : [];
+	const inOrg = [eq(mailboxes.organizationId, orgId)];
 	const ownedRows = await db
 		.select({
 			id: mailboxes.id,
@@ -139,7 +134,7 @@ export async function listAccessibleMailboxes(
 export async function listAccessibleMailboxIds(
 	db: AppDatabase,
 	user: Pick<SessionUser, "id" | "email" | "role">,
-	orgId?: string,
+	orgId: string,
 ) {
 	const rows = await listAccessibleMailboxes(db, user, orgId);
 	return rows.map((row) => row.id);

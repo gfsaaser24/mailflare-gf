@@ -478,4 +478,32 @@ describe.skipIf(!hasTestDatabase())("v1 API (T6.2)", () => {
 		const other = await GET(get("/api/v1/search?q=widget", readOnlyKey), emptyCtx());
 		expect(other.status).toBe(200);
 	}, 180_000);
+
+	it("429s the 601st send a key makes in a minute", async () => {
+		const { POST } = await import("@/app/api/v1/send/route");
+		const { V1_RATE_LIMIT } = await import("@/app/api/v1/route-helpers");
+		expect(V1_RATE_LIMIT).toBe(600);
+
+		// An empty body is rejected inside the handler, i.e. after the limiter has
+		// counted the request — the cheapest call that still consumes quota.
+		const BATCH = 50;
+		for (let done = 0; done < V1_RATE_LIMIT; done += BATCH) {
+			const batch = await Promise.all(
+				Array.from({ length: BATCH }, () =>
+					POST(post("/api/v1/send", agentKey, {}), emptyCtx()),
+				),
+			);
+			expect(batch.map((response) => response.status)).toEqual(Array(BATCH).fill(400));
+		}
+
+		const limited = await POST(post("/api/v1/send", agentKey, {}), emptyCtx());
+		expect(limited.status).toBe(429);
+		expect(limited.headers.get("Retry-After")).toBe("60");
+		expect(await limited.json()).toEqual({
+			error: "Rate limit exceeded",
+			code: "rate_limited",
+		});
+		// Nothing reached the transport: every request failed before sending.
+		expect(sent).toHaveLength(0);
+	}, 180_000);
 });

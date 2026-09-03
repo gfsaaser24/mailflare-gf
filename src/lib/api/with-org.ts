@@ -157,9 +157,12 @@ export type WithOrgOptions = {
 	requiredScope?: string;
 };
 
+/** `organizationId` is stamped on, so the caller must not (and need not) supply it. */
+type OrgInsertInput<T extends TenantTable> = Omit<T["$inferInsert"], "organizationId">;
+
 type OrgInsertValues = {
-	<T extends TenantTable>(table: T, values: T["$inferInsert"]): T["$inferInsert"];
-	<T extends TenantTable>(table: T, values: T["$inferInsert"][]): T["$inferInsert"][];
+	<T extends TenantTable>(table: T, values: OrgInsertInput<T>): T["$inferInsert"];
+	<T extends TenantTable>(table: T, values: OrgInsertInput<T>[]): T["$inferInsert"][];
 };
 
 function json(error: string, status: number): NextResponse {
@@ -172,7 +175,7 @@ export function createOrgScope(orgId: string): Pick<OrgContext, "scoped" | "inse
 
 	const insertValues = (<T extends TenantTable>(
 		table: T,
-		values: T["$inferInsert"] | T["$inferInsert"][],
+		values: OrgInsertInput<T> | OrgInsertInput<T>[],
 	) => {
 		void table;
 		return Array.isArray(values)

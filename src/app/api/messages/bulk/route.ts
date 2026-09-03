@@ -46,6 +46,8 @@ export const POST = withOrg(async ({ env, db, user, orgId, scoped }, request) =>
 
 	const values = {
 		...(status ? { status } : {}),
+		// Retention purges by time in trash, not by message age.
+		...(status ? { trashedAt: status === "trash" ? new Date() : null } : {}),
 		...(read !== null ? { read } : {}),
 		...(folderId !== undefined ? { folderId } : {}),
 	};

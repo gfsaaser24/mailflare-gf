@@ -35,9 +35,13 @@ export async function userHasMailboxes(env: CloudflareEnv, userId: string): Prom
 	return !!row;
 }
 
-export async function userHasAccessibleMailboxes(env: CloudflareEnv, user: SessionUser): Promise<boolean> {
+export async function userHasAccessibleMailboxes(
+	env: CloudflareEnv,
+	user: SessionUser,
+	orgId: string,
+): Promise<boolean> {
 	const db = getDb(env);
-	const ids = await listAccessibleMailboxIds(db, user);
+	const ids = await listAccessibleMailboxIds(db, user, orgId);
 	return ids.length > 0;
 }
 
@@ -78,11 +82,20 @@ export async function markMessageAsRead(env: CloudflareEnv, userId: string, mess
 	return true;
 }
 
-export async function markMessageAsReadForUser(env: CloudflareEnv, user: SessionUser, messageId: string) {
+export async function markMessageAsReadForUser(
+	env: CloudflareEnv,
+	user: SessionUser,
+	messageId: string,
+	orgId: string,
+) {
 	const db = getDb(env);
-	const [message] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.organizationId, orgId)))
+		.limit(1);
 	if (!message?.mailboxId) return false;
-	const access = await getMailboxAccessLevel(db, user, message.mailboxId);
+	const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
 	if (!access?.canRead) return false;
 	await db.update(messages).set({ read: true }).where(eq(messages.id, messageId));
 	await createAuditLog(env, {
@@ -99,13 +112,21 @@ export async function updateMessageStatusForUser(
 	user: SessionUser,
 	messageId: string,
 	status: string,
+	orgId: string,
 ) {
 	const db = getDb(env);
-	const [message] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+	const [message] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, messageId), eq(messages.organizationId, orgId)))
+		.limit(1);
 	if (!message?.mailboxId) return false;
-	const access = await getMailboxAccessLevel(db, user, message.mailboxId);
+	const access = await getMailboxAccessLevel(db, user, message.mailboxId, orgId);
 	if (!access?.canManage) return false;
-	await db.update(messages).set({ status }).where(eq(messages.id, messageId));
+	await db
+		.update(messages)
+		.set({ status, trashedAt: status === "trash" ? new Date() : null })
+		.where(eq(messages.id, messageId));
 	await createAuditLog(env, {
 		actorUserId: user.id,
 		mailboxId: message.mailboxId,
@@ -131,7 +152,7 @@ export async function updateMessageStatus(
 	if (!message || message.userId !== userId) return false;
 	await db
 		.update(messages)
-		.set({ status })
+		.set({ status, trashedAt: status === "trash" ? new Date() : null })
 		.where(eq(messages.id, messageId));
 	return true;
 }

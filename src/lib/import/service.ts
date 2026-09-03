@@ -93,6 +93,8 @@ async function importMessageToMailbox(
 		textBody: parsed.text,
 		htmlBody: parsed.html,
 		status: placement.status,
+		// Time in trash starts at import; retention must not purge it at once.
+		trashedAt: placement.status === "trash" ? new Date() : null,
 		read: placement.direction === "outbound",
 		threadId: parsed.messageId,
 		createdAt,
