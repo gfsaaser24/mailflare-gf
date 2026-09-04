@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/db";
-import { domains, mailboxAccess, mailboxes } from "@/db/schema";
+import { domains, mailboxAccess, mailboxes, users } from "@/db/schema";
 import type { SessionUser } from "@/lib/auth/types";
 import type { MailboxAccessLevel, MailboxPermission } from "./types";
 
@@ -129,6 +129,45 @@ export async function listAccessibleMailboxes(
 	});
 
 	return [...owned, ...shared];
+}
+
+/**
+ * Every mailbox of one organisation, with its owning account — the admin-only
+ * counterpart of `listAccessibleMailboxes`.
+ *
+ * This is a *management* listing, not an access listing: it says which addresses are
+ * taken and by whom (the org-wide uniqueness rule `POST /api/mailboxes` enforces), and
+ * grants nothing. It must never be used to decide whether a caller may open a mailbox
+ * — that is `getMailboxAccessLevel` / `listAccessibleMailboxes`, which stay untouched.
+ *
+ * Disabled mailboxes are included: they still hold their address.
+ */
+export async function listOrganizationMailboxes(db: AppDatabase, orgId: string) {
+	const rows = await db
+		.select({
+			id: mailboxes.id,
+			ownerUserId: mailboxes.userId,
+			ownerEmail: users.email,
+			ownerName: users.name,
+			domainId: mailboxes.domainId,
+			localPart: mailboxes.localPart,
+			displayName: mailboxes.displayName,
+			avatarKey: mailboxes.avatarKey,
+			type: mailboxes.type,
+			disabled: mailboxes.disabled,
+			createdAt: mailboxes.createdAt,
+			hostname: domains.hostname,
+		})
+		.from(mailboxes)
+		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
+		.innerJoin(users, eq(mailboxes.userId, users.id))
+		.where(eq(mailboxes.organizationId, orgId))
+		.orderBy(domains.hostname, mailboxes.localPart);
+
+	return rows.map((row) => {
+		const { avatarKey, ...mailbox } = row;
+		return { ...mailbox, hasAvatar: !!avatarKey };
+	});
 }
 
 export async function listAccessibleMailboxIds(

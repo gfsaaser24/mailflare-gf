@@ -26,8 +26,8 @@ vi.mock("next/headers", () => ({
 	}),
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const routeCtx = (params: Record<string, string> = {}) =>
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	({ params: Promise.resolve(params) }) as any;
 
 const DAY = 24 * 60 * 60 * 1000;

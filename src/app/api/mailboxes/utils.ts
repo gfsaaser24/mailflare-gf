@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { domains, mailboxes } from "@/db/schema";
+import { domains, mailboxes, users } from "@/db/schema";
 import type { OrgContext } from "@/lib/api/with-org";
 import { ensureEmailRoutingRuleToWorker } from "@/lib/cloudflare-api";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
@@ -66,4 +66,23 @@ export async function ensurePersonalMailbox(ctx: OrgContext) {
 	}
 
 	return listAccessibleMailboxes(db, user, orgId);
+}
+
+/**
+ * The 409 message for an address that is already taken, naming the owning account.
+ *
+ * Admin-only: the owner's email is looked up on the conflict path alone, and only
+ * because the caller may already provision mailboxes for those accounts.
+ */
+export async function describeMailboxConflict(
+	{ db, scoped }: OrgContext,
+	existing: { userId: string },
+	address: string,
+): Promise<string> {
+	const [owner] = await db
+		.select({ email: users.email })
+		.from(users)
+		.where(and(scoped(users), eq(users.id, existing.userId)))
+		.limit(1);
+	return owner ? `${address} is already assigned to ${owner.email}` : "Mailbox already exists";
 }

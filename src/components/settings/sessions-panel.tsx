@@ -101,8 +101,18 @@ export function SessionsPanel() {
 	}, []);
 
 	useEffect(() => {
-		void refresh();
-	}, [refresh]);
+		let cancelled = false;
+		loadSessions()
+			.then((rows) => {
+				if (!cancelled) setSessions(rows);
+			})
+			.catch((err) => {
+				if (!cancelled) setStatus(err instanceof Error ? err.message : "Could not load sessions");
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	async function onRevoke(id: string) {
 		setStatus(null);

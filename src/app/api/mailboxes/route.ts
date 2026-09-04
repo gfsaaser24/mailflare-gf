@@ -1,15 +1,40 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { domains, mailboxes, users } from "@/db/schema";
+import { requireTeamAdmin } from "@/app/api/accounts/utils";
 import { withOrg } from "@/lib/api/with-org";
+import { isAdmin } from "@/lib/auth/admin";
 import { newId } from "@/lib/ids";
 import { mailboxSchema } from "@/lib/validators";
+import { listOrganizationMailboxes } from "@/lib/mailboxes/access";
 import { ensureMailboxDomainRouting, getMailboxDomainAddresses } from "@/lib/mailboxes/domain-addresses";
 import { isQuotaExceededError, quotaErrorBody } from "@/lib/quotas/errors";
 import { releaseQuota, reserveQuota } from "@/lib/quotas/service";
-import { ensurePersonalMailbox } from "./utils";
+import { ensurePersonalMailbox, describeMailboxConflict } from "./utils";
 
-export const GET = withOrg(async (ctx) => {
+/**
+ * `?scope=organization` (admin only) lists every mailbox of the organisation for
+ * management, because the create rule rejects duplicates org-wide while the default
+ * listing only shows what the caller may open — so an address can be taken by a row
+ * the admin cannot see. It grants no access to anyone's mail; opening or editing a
+ * mailbox still goes through `getMailboxAccessLevel`.
+ *
+ * The default (`scope` absent or `accessible`) is unchanged, side effect included.
+ */
+export const GET = withOrg(async (ctx, request) => {
+	if (new URL(request.url).searchParams.get("scope") === "organization") {
+		const forbidden = requireTeamAdmin(ctx);
+		if (forbidden) return forbidden;
+		const rows = await listOrganizationMailboxes(ctx.db, ctx.orgId);
+		return NextResponse.json({
+			mailboxes: rows.map((mailbox) => ({
+				...mailbox,
+				isOwn: mailbox.ownerUserId === ctx.user.id,
+			})),
+			canCreateShared: ctx.user.role === "admin",
+		});
+	}
+
 	const rows = await ensurePersonalMailbox(ctx);
 	return NextResponse.json({
 		mailboxes: await Promise.all(rows.map(async (mailbox) => ({
@@ -65,7 +90,13 @@ export const POST = withOrg(async (ctx, request) => {
 		)
 		.limit(1);
 	if (existing) {
-		return NextResponse.json({ error: "Mailbox already exists" }, { status: 409 });
+		// The uniqueness rule is org-wide but the default listing only shows what the
+		// caller may open, so an admin can collide with a row they cannot see. Name the
+		// owner for them; everyone else keeps the generic message.
+		const error = isAdmin(user)
+			? await describeMailboxConflict(ctx, existing, `${localPart}@${domain.hostname}`)
+			: "Mailbox already exists";
+		return NextResponse.json({ error }, { status: 409 });
 	}
 
 	// Quota (T5.1): booked under the org usage lock before the row exists, so two

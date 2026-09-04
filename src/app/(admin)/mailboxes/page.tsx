@@ -65,10 +65,14 @@ export default function MailboxesPage() {
 		},
 	});
 
+	// The organisation scope, not the caller's own inboxes: creating a mailbox is
+	// refused when the address is taken anywhere in the organisation, so this page
+	// has to show the rows that do the blocking. Only the caller's own rows are
+	// manageable from here; the rest link to the owning account.
 	const mailboxes = useQuery({
-		queryKey: ["mailboxes"],
+		queryKey: ["mailboxes", "organization"],
 		queryFn: async () => {
-			const res = await authFetch("/api/mailboxes");
+			const res = await authFetch("/api/mailboxes?scope=organization");
 			return (await res.json()) as MailboxesResponse;
 		},
 	});
@@ -240,16 +244,21 @@ export default function MailboxesPage() {
 							...mailbox,
 							hostname: mailbox.hostname ?? domainMap.get(mailbox.domainId) ?? "?",
 						};
-
-						return (
-							<Link
-								key={mailbox.id}
-								href={`/mailboxes/${mailbox.id}`}
-								className="group flex items-start gap-4 rounded-3xl bg-white p-5 transition-colors hover:bg-blue-50/10"
-							>
+						// Only the caller's own mailboxes are managed from here. Somebody
+						// else's opens the account that owns it instead, where the per-account
+						// mailbox screen already lives; nothing about it is editable inline.
+						const isOwn = mailbox.isOwn ?? true;
+						const href = isOwn
+							? `/mailboxes/${mailbox.id}`
+							: mailbox.ownerUserId
+								? `/accounts/${mailbox.ownerUserId}/mailboxes`
+								: null;
+						const ownerLabel = isOwn ? "You" : mailbox.ownerEmail ?? "Unknown";
+						const body = (
+							<>
 								<span className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-100 text-sm font-semibold text-blue-700">
 									{getMailboxName(mailboxWithHostname).trim().charAt(0).toUpperCase() || "?"}
-									{mailbox.hasAvatar && (
+									{isOwn && mailbox.hasAvatar && (
 										<img
 											src={`/api/mailboxes/${mailbox.id}/avatar`}
 											alt={`${getMailboxName(mailboxWithHostname)} profile`}
@@ -269,12 +278,42 @@ export default function MailboxesPage() {
 												Shared
 											</span>
 										)}
+										{mailbox.disabled && (
+											<span className="inline-flex shrink-0 items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
+												Disabled
+											</span>
+										)}
 									</span>
 									<span className="block truncate no-font-mono text-sm text-neutral-500">
 										{getMailboxAddress(mailboxWithHostname)}
 									</span>
 								</span>
+								<span className="ml-auto min-w-0 pl-4 text-right">
+									<span className="block text-xs font-medium uppercase tracking-wide text-neutral-400">
+										Owner
+									</span>
+									<span className="block truncate no-font-mono text-sm text-neutral-500">
+										{ownerLabel}
+									</span>
+								</span>
+							</>
+						);
+
+						return href ? (
+							<Link
+								key={mailbox.id}
+								href={href}
+								className="group flex items-start gap-4 rounded-3xl bg-white p-5 transition-colors hover:bg-blue-50/10"
+							>
+								{body}
 							</Link>
+						) : (
+							<div
+								key={mailbox.id}
+								className="group flex items-start gap-4 rounded-3xl bg-white p-5"
+							>
+								{body}
+							</div>
 						);
 					})}
 				</div>

@@ -8,6 +8,13 @@ export type Mailbox = {
 	type?: "personal" | "shared";
 	permission?: "read_only" | "send_as" | "send_on_behalf" | "full_access";
 	isPrimary?: boolean;
+	disabled?: boolean;
+	/** Set by `GET /api/mailboxes?scope=organization` only. */
+	ownerUserId?: string;
+	ownerEmail?: string;
+	ownerName?: string;
+	/** True when the caller owns the mailbox and may manage it inline. */
+	isOwn?: boolean;
 };
 
 export type Domain = {
