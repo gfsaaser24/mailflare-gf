@@ -438,8 +438,15 @@ export const calendarEvents = pgTable(
 		timezone: text("timezone").notNull().default("UTC"),
 		/** RFC 5545 RRULE body, without the `RRULE:` prefix. Null for a single event. */
 		rrule: text("rrule"),
-		/** ICS UID; stable across exports and updates. */
-		uid: text("uid").notNull().$defaultFn(() => newId("evt")),
+		/**
+		 * ICS UID; stable across exports and updates. The SQL default exists so a
+		 * build that predates this column can still insert a row (the app supplies
+		 * its own value), which keeps a migrate-then-deploy rollout safe.
+		 */
+		uid: text("uid")
+			.notNull()
+			.default(sql`('evt_' || gen_random_uuid()::text)`)
+			.$defaultFn(() => newId("evt")),
 		/** `private` is the owner only; `organization` is everyone in the org. */
 		visibility: text("visibility", { enum: ["private", "organization"] })
 			.notNull()

@@ -1,0 +1,1 @@
+ALTER TABLE "calendar_events" ALTER COLUMN "uid" SET DEFAULT ('evt_' || gen_random_uuid()::text);
