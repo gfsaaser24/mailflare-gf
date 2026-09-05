@@ -99,7 +99,12 @@ export function getEnv(): AppEnv {
 			recoveryPerEmail: createMemoryRateLimit({ limit: 3, periodSeconds: 60 * 60 }),
 			magicLink: createMemoryRateLimit({ limit: 5, periodSeconds: 15 * 60 }),
 			magicLinkPerEmail: createMemoryRateLimit({ limit: 3, periodSeconds: 60 * 60 }),
+			// Keyed on the user, not the session: every login mints a fresh
+			// pending session, so a session key reset the budget on demand.
 			twoFactor: createMemoryRateLimit({ limit: 5, periodSeconds: 5 * 60 }),
+			// The same step, keyed on the caller's IP, so one host cannot walk
+			// codes for many accounts at five tries each.
+			twoFactorPerIp: createMemoryRateLimit({ limit: 20, periodSeconds: 5 * 60 }),
 		},
 	};
 	return cached;

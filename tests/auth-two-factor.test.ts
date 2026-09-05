@@ -5,10 +5,12 @@
  *  - a pending session is not a login;
  *  - a correct code promotes it to a real one;
  *  - a backup code works exactly once;
+ *  - the attempt budget is the USER's, not the pending session's, and five
+ *    consecutive failures destroy the pending session;
  *  - an organisation that requires two-factor blocks a user who has not
  *    enrolled, except on the routes needed to enrol.
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { generate } from "otplib";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -47,10 +49,14 @@ const routeCtx = () => ({ params: Promise.resolve({}) }) as any;
 const ORG_2FA = "org_two_factor";
 const PASSWORD = "correct-horse-battery";
 
-function post(path: string, body: unknown): Request {
+/**
+ * A distinct IP per test keeps the per-IP bucket (20 per 5 minutes, shared by
+ * every test in this process) from deciding the outcome of a later test.
+ */
+function post(path: string, body: unknown, ip = "10.9.0.1"): Request {
 	return new Request(`http://localhost${path}`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json", "x-real-ip": ip },
 		body: JSON.stringify(body),
 	});
 }
@@ -175,6 +181,60 @@ describe.skipIf(!hasTestDatabase())("two-factor authentication", () => {
 		cookieJar.set(SESSION_COOKIE, await pendingSessionFor(userId));
 		const second = await POST(post("/api/auth/two-factor/verify", { code: backupCodes[0] }));
 		expect(second.status).toBe(400);
+	});
+
+	it("counts attempts against the user, not the pending session", async () => {
+		// A fresh pending session is one `/api/auth/login` away, so keying the
+		// budget on the session handed the attacker a reset button.
+		const { userId, secret } = await seedEnrolledUser("budget@example.test");
+		const { POST } = await import("@/app/api/auth/two-factor/verify/route");
+		const ip = "10.9.0.20";
+
+		// Four wrong codes on one session: under the five-failure threshold, so
+		// the session survives and only the budget is spent.
+		cookieJar.set(SESSION_COOKIE, await pendingSessionFor(userId));
+		for (let i = 0; i < 4; i++) {
+			const response = await POST(post("/api/auth/two-factor/verify", { code: "000000" }, ip));
+			expect(response.status, `attempt ${i + 1}`).toBe(400);
+		}
+
+		// Fifth attempt, brand new pending session, correct code: still allowed,
+		// and it spends the last of the user's budget.
+		cookieJar.set(SESSION_COOKIE, await pendingSessionFor(userId));
+		const fifth = await POST(
+			post("/api/auth/two-factor/verify", { code: await generate({ secret }) }, ip),
+		);
+		expect(fifth.status).toBe(200);
+
+		// Sixth, on yet another new session and with a correct code: refused.
+		cookieJar.set(SESSION_COOKIE, await pendingSessionFor(userId));
+		const sixth = await POST(
+			post("/api/auth/two-factor/verify", { code: await generate({ secret }) }, ip),
+		);
+		expect(sixth.status).toBe(429);
+	});
+
+	it("destroys the pending session after five consecutive failures", async () => {
+		const { userId } = await seedEnrolledUser("lockout@example.test");
+		const db = createDb();
+		const { POST } = await import("@/app/api/auth/two-factor/verify/route");
+		const ip = "10.9.0.21";
+
+		cookieJar.set(SESSION_COOKIE, await pendingSessionFor(userId));
+		for (let i = 0; i < 4; i++) {
+			const response = await POST(post("/api/auth/two-factor/verify", { code: "000000" }, ip));
+			expect(response.status, `attempt ${i + 1}`).toBe(400);
+		}
+
+		// The fifth failure spends the half-authenticated session itself.
+		const last = await POST(post("/api/auth/two-factor/verify", { code: "000000" }, ip));
+		expect(last.status).toBe(401);
+
+		const rows = await db
+			.select({ id: sessions.id })
+			.from(sessions)
+			.where(and(eq(sessions.userId, userId), eq(sessions.pendingTwoFactor, true)));
+		expect(rows).toHaveLength(0);
 	});
 
 	it("refuses a code without a pending session", async () => {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/cloudflare";
-import { requireUser } from "@/lib/auth/cookies";
+import { requireUserForRoute } from "@/lib/auth/cookies";
 import { sendEmailSchema } from "@/lib/validators";
 import { sendEmail } from "@/lib/email/send";
 import { parseSendRequest } from "./utils";
@@ -9,7 +9,12 @@ import { getSendErrorStatus } from "./error-utils";
 
 export async function POST(request: Request) {
 	const env = getEnv();
-	const user = await requireUser(env, request);
+	// `requireUserForRoute` answers 401 for an anonymous caller (the old
+	// `requireUser` threw, which the router turned into a 500) and applies the
+	// organisation's two-factor policy, which this route used to skip.
+	const auth = await requireUserForRoute(env, request);
+	if (!auth.ok) return auth.response;
+	const user = auth.user;
 	let input;
 	try {
 		input = await parseSendRequest(request);

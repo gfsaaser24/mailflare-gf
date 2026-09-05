@@ -12,9 +12,34 @@
  * front, anyone can set it on a direct request, so trusting it by default would
  * hand every attacker a free rate-limit bypass. Hence: opt-in, and only turn it
  * on when the origin refuses traffic that did not come through Cloudflare.
+ *
+ * The flag is read from `AppEnv` (`src/lib/env.ts`), which is the one place
+ * `process.env` is parsed. Callers that already hold an env should pass it;
+ * everyone else falls back to `getEnv()`.
  */
-export function getClientIp(request: Request): string {
-	if (process.env.TRUST_CF_HEADERS === "true") {
+
+import { getEnv } from "@/lib/env";
+
+/** Just the slice of the env this module needs. */
+type TrustEnv = Pick<AppEnv, "TRUST_CF_HEADERS">;
+
+/**
+ * `src/lib/env.ts` pulls in the database, storage and mail transport, none of
+ * which import this module, so the import above is not a cycle. `getEnv()` is
+ * still called defensively: a half-configured env must not turn IP resolution
+ * into a throw, and the failure mode is "do not trust the Cloudflare header".
+ */
+function trustsCloudflareHeaders(env?: TrustEnv): boolean {
+	if (env) return env.TRUST_CF_HEADERS === "true";
+	try {
+		return getEnv().TRUST_CF_HEADERS === "true";
+	} catch {
+		return false;
+	}
+}
+
+export function getClientIp(request: Request, env?: TrustEnv): string {
+	if (trustsCloudflareHeaders(env)) {
 		const cfIp = request.headers.get("cf-connecting-ip")?.trim();
 		if (cfIp) return cfIp;
 	}

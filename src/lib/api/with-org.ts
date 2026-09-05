@@ -49,7 +49,9 @@
  * 4. Enforces the organisation's two-factor policy on cookie sessions: when
  *    `organizations.require_two_factor` is set and the user has no
  *    `totp_enabled_at`, everything answers 403 `{"error":"two_factor_required"}`
- *    except the handful of routes needed to enrol (see `TWO_FACTOR_EXEMPT`).
+ *    except the handful of routes needed to enrol. The gate itself lives in
+ *    `src/lib/auth/two-factor-policy.ts` and is shared with
+ *    `requireUserForRoute()`, so no door can skip it.
  * 5. Calls the handler with an `OrgContext`.
  *
  * ---------------------------------------------------------------------------
@@ -87,8 +89,7 @@ import {
 } from "@/db/schema";
 import { authenticateApiKey, isApiAuthFailure, requireScope } from "@/lib/api/auth";
 import { SESSION_COOKIE, getUserFromSession } from "@/lib/auth/session";
-import { organizationRequiresTwoFactor } from "@/lib/auth/totp";
-import { ownsAgentMailMailbox } from "@/lib/mailboxes/agent-mail";
+import { twoFactorGate, type TwoFactorSubject } from "@/lib/auth/two-factor-policy";
 import type { SessionUser } from "@/lib/auth/types";
 import { getEnv } from "@/lib/cloudflare";
 import {
@@ -176,50 +177,10 @@ function json(error: string, status: number): NextResponse {
 }
 
 /**
- * The routes a user must still reach while they are forced to enrol, otherwise
- * the requirement would lock them out of the very screens that satisfy it.
- *
- * Anything under `/api/auth/two-factor` (setup, enable, status), the session
- * endpoint the client polls, sign-out, and reading — never writing — the
- * organisation policy.
+ * The two-factor policy lives in `src/lib/auth/two-factor-policy.ts` so that
+ * `withOrg()` and `requireUserForRoute()` cannot drift apart: a route that
+ * authenticates without `withOrg()` used to skip the gate entirely.
  */
-function isTwoFactorEnrolmentRoute(request: Request): boolean {
-	let pathname: string;
-	try {
-		pathname = new URL(request.url).pathname;
-	} catch {
-		return false;
-	}
-	// Trailing slashes are normalised away so `/api/auth/me/` cannot slip past.
-	const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
-	if (path === "/api/auth/two-factor" || path.startsWith("/api/auth/two-factor/")) return true;
-	if (path === "/api/auth/me" || path === "/api/auth/logout") return true;
-	if (path === "/api/settings/security" && request.method === "GET") return true;
-	return false;
-}
-
-/**
- * 403 when the organisation forces two-factor and this session's user has not
- * enrolled. API keys are exempt: they are machine credentials with their own
- * scopes and revocation, and an agent cannot type a code.
- *
- * The owner of an agent mailbox is exempt for the same reason: the two-factor
- * routes refuse to enrol them at all (`src/lib/mailboxes/agent-mail.ts`), so
- * the requirement would be a locked door with no key. Nobody else is relaxed —
- * delegated access to a shared agent inbox does not count.
- */
-async function twoFactorGate(
-	db: AppDatabase,
-	orgId: string,
-	request: Request,
-	session: { enrolled: boolean; userId: string } | null,
-): Promise<NextResponse | null> {
-	if (!session || session.enrolled) return null;
-	if (isTwoFactorEnrolmentRoute(request)) return null;
-	if (!(await organizationRequiresTwoFactor(db, orgId))) return null;
-	if (await ownsAgentMailMailbox(db, session.userId, orgId)) return null;
-	return json("two_factor_required", 403);
-}
 
 /** Builds the `scoped`/`insertValues` pair for one organisation. */
 export function createOrgScope(orgId: string): Pick<OrgContext, "scoped" | "insertValues"> {
@@ -252,7 +213,7 @@ export function withOrg<T extends RouteContext = RouteContext>(
 
 		let principal: OrgPrincipal | null = null;
 		/** Null on the API-key path; the enrolment state of the cookie session otherwise. */
-		let session: { enrolled: boolean; userId: string } | null = null;
+		let session: TwoFactorSubject | null = null;
 
 		const jar = await cookies();
 		const sessionUser = await getUserFromSession(env, jar.get(SESSION_COOKIE)?.value);

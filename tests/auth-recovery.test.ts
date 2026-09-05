@@ -13,6 +13,7 @@ import { authTokens, sessions, users } from "@/db/schema";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { SESSION_COOKIE, createSession } from "@/lib/auth/session";
 import { consumeAuthToken, issueAuthToken } from "@/lib/auth/tokens";
+import { flushRecoveryWork } from "@/app/api/auth/forgot-password/utils";
 import { newId } from "@/lib/ids";
 import { createDb, hasTestDatabase } from "./helpers/db";
 
@@ -102,6 +103,9 @@ describe.skipIf(!hasTestDatabase())("password recovery and magic links", () => {
 		expect(body).toEqual({ ok: true });
 		// No token, no address, nothing that distinguishes this from a miss.
 		expect(JSON.stringify(body)).not.toContain("tok_");
+		// Issuing and mailing the link is detached from the response, so that a
+		// known address and an unknown one take the same time. Wait for it.
+		await flushRecoveryWork();
 		expect(await tokenCount(userId, "password_reset")).toBe(1);
 	});
 
@@ -114,6 +118,7 @@ describe.skipIf(!hasTestDatabase())("password recovery and magic links", () => {
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ ok: true });
+		await flushRecoveryWork();
 		const rows = await createDb().select({ id: authTokens.id }).from(authTokens);
 		expect(rows).toHaveLength(0);
 	});
@@ -220,6 +225,51 @@ describe.skipIf(!hasTestDatabase())("password recovery and magic links", () => {
 
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ ok: true });
+		await flushRecoveryWork();
 		expect(await tokenCount(userId, "magic_link")).toBe(0);
+	});
+
+	/**
+	 * The per-email budget is three an hour and is the only limiter an attacker
+	 * can point at somebody else's address, so a request that never passed the
+	 * bot check must not be able to spend it.
+	 */
+	it("does not spend the per-email budget when Turnstile fails", async () => {
+		const email = "turnstile@recovery.test";
+		const userId = await seedUser({ email });
+		const { POST } = await import("@/app/api/auth/forgot-password/route");
+
+		// `getEnv()` is built once per process, so the secret is set on the live
+		// env object rather than on process.env.
+		const { getEnv } = await import("@/lib/env");
+		const env = getEnv();
+		env.TURNSTILE_SECRET_KEY = "test-secret";
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ success: false }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			})) as typeof fetch;
+
+		try {
+			// Four refusals: one more than the per-email budget would allow.
+			for (let i = 0; i < 4; i++) {
+				const blocked = await POST(
+					post("/api/auth/forgot-password", { email, turnstileToken: "x" }, "10.0.0.20"),
+				);
+				expect(blocked.status, `attempt ${i + 1}`).toBe(400);
+			}
+		} finally {
+			globalThis.fetch = realFetch;
+			env.TURNSTILE_SECRET_KEY = undefined;
+		}
+
+		// Budget untouched: a real request still gets its link.
+		const response = await POST(
+			post("/api/auth/forgot-password", { email }, "10.0.0.21"),
+		);
+		expect(response.status).toBe(200);
+		await flushRecoveryWork();
+		expect(await tokenCount(userId, "password_reset")).toBe(1);
 	});
 });

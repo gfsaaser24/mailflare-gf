@@ -54,8 +54,10 @@ interface AuthRateLimiters {
 	magicLink: RateLimiter;
 	/** 3 per hour per email key. */
 	magicLinkPerEmail: RateLimiter;
-	/** 5 per 5 minutes per session key. */
+	/** 5 per 5 minutes per `user:<id>` key. */
 	twoFactor: RateLimiter;
+	/** 20 per 5 minutes per `ip:<addr>` key. */
+	twoFactorPerIp: RateLimiter;
 }
 
 type AuthRateLimitBucket = keyof AuthRateLimiters;

@@ -26,6 +26,7 @@ import { getClientIp } from "@/lib/http/ip";
 import { readJsonBody } from "@/lib/http/request";
 import {
 	PASSWORD_RESET_TTL_MS,
+	deferRecoveryWork,
 	forgotPasswordSchema,
 	normaliseEmail,
 	recordRecoveryActivity,
@@ -55,21 +56,27 @@ export async function POST(request: Request) {
 	}
 	const email = normaliseEmail(parsed.data.email);
 
+	// Order matters: per-IP, then the bot check, then per-EMAIL. The per-email
+	// budget is three an hour and is the only limiter an attacker can aim at
+	// somebody else's account, so it must not be spendable by a request that
+	// never passed Turnstile — that turned a cheap flood into a denial of
+	// password resets for a chosen address.
 	if (!(await allowAttempt(env, "recovery", rateLimitKeyForRequest(request)))) {
 		return NextResponse.json(
 			{ error: "Too many requests. Try again shortly." },
 			{ status: 429, headers: { "Retry-After": "900" } },
 		);
 	}
+
+	if (!(await verifyTurnstileToken(env, request, (body as Record<string, unknown>).turnstileToken))) {
+		return NextResponse.json({ error: "Verification failed. Please try again." }, { status: 400 });
+	}
+
 	if (!(await allowAttempt(env, "recoveryPerEmail", email))) {
 		return NextResponse.json(
 			{ error: "Too many requests. Try again shortly." },
 			{ status: 429, headers: { "Retry-After": "3600" } },
 		);
-	}
-
-	if (!(await verifyTurnstileToken(env, request, (body as Record<string, unknown>).turnstileToken))) {
-		return NextResponse.json({ error: "Verification failed. Please try again." }, { status: 400 });
 	}
 
 	// Checked before the lookup: a 500 that only fired for real accounts would
@@ -97,10 +104,15 @@ export async function POST(request: Request) {
 	const recoveryAddress = user?.resetEmail?.trim();
 	if (!user || user.disabled || !recoveryAddress) return neutral();
 
-	const requestIp = getClientIp(request);
-	try {
+	// Detached on purpose: issuing the token and calling the mail transport is
+	// the only work a known address does that an unknown one does not, so
+	// awaiting it here made the response time answer the question the body
+	// refuses to. The audit row goes with it, for the same reason.
+	const requestIp = getClientIp(request, env);
+	const userId = user.id;
+	deferRecoveryWork("Password reset email", async () => {
 		const token = await issueAuthToken(env, {
-			userId: user.id,
+			userId,
 			purpose: "password_reset",
 			ttlMs: PASSWORD_RESET_TTL_MS,
 			requestIp,
@@ -116,16 +128,11 @@ export async function POST(request: Request) {
 			text: mail.text,
 			html: mail.html,
 		});
-	} catch (error) {
-		// Never the token, never the address: only that delivery failed.
-		console.error("Password reset email could not be sent", error instanceof Error ? error.message : error);
-		return neutral();
-	}
-
-	await recordRecoveryActivity(env, {
-		action: "auth.password_reset_requested",
-		userId: user.id,
-		request,
+		await recordRecoveryActivity(env, {
+			action: "auth.password_reset_requested",
+			userId,
+			request,
+		});
 	});
 	return neutral();
 }

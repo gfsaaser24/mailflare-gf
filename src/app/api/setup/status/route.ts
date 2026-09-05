@@ -26,7 +26,9 @@ export async function GET() {
 			headers: { "Cache-Control": "no-store" },
 		});
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Could not load setup status";
-		return NextResponse.json({ error: message }, { status: 500 });
+		// The caller is anonymous, so the real message stays in the log: a raw
+		// database error names hosts, roles and columns.
+		console.error("Setup status could not be read", error);
+		return NextResponse.json({ error: "Could not load setup status" }, { status: 500 });
 	}
 }

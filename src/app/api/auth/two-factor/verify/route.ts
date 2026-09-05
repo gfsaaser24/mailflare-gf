@@ -6,9 +6,15 @@
  * the app is reachable until this promotes it.
  *
  * Body: `{ code }` — a six-digit authenticator code or an `xxxx-xxxx` backup
- * code, which is burnt on use. Rate limited per session (5 per 5 minutes), so
- * the ten thousand six-digit codes cannot be walked. Every failure returns the
- * same generic message.
+ * code, which is burnt on use. Every failure returns the same generic message.
+ *
+ * Rate limiting is keyed on the USER (5 per 5 minutes) and, separately, on the
+ * caller's IP (20 per 5 minutes); either bucket being empty refuses the
+ * attempt. It used to be keyed on the pending session, which was no budget at
+ * all: `/api/auth/login` mints a fresh pending session on every call, so an
+ * attacker walking the ten thousand six-digit codes only had to sign in again
+ * every five tries. Five consecutive failures also destroy the pending session,
+ * forcing the password step to be repeated.
  */
 import { and, eq } from "drizzle-orm";
 import { cookies } from "next/headers";
@@ -19,9 +25,11 @@ import { recordAuthActivity } from "@/lib/auth/activity";
 import { decryptSecret } from "@/lib/auth/crypto";
 import { setSessionCookie } from "@/lib/auth/login-flow";
 import { allowAttempt } from "@/lib/auth/rate-limit";
+import { getClientIp } from "@/lib/http/ip";
 import {
 	SESSION_COOKIE,
 	SESSION_MAX_AGE_SECONDS,
+	deleteSession,
 	getPendingTwoFactorSession,
 	promotePendingSession,
 } from "@/lib/auth/session";
@@ -36,24 +44,62 @@ import { asString, readTwoFactorBody } from "../shared";
 
 /** One message for every rejection: never say which half was wrong. */
 const INVALID = "That code is not right. Try again.";
+/** The one answer for "there is nothing here to verify against". */
+const EXPIRED = "Your sign-in expired. Start again.";
+
+/**
+ * Consecutive failures per user, in process.
+ *
+ * The limiters bound how FAST codes can be tried; this bounds how many wrong
+ * codes one half-authenticated session survives at all. Reaching the threshold
+ * deletes the pending session, so the attacker is sent back to the password
+ * step. Cleared on success, and forgotten once the window lapses.
+ *
+ * In memory on purpose: the app runs as a single container, and the alternative
+ * is a schema change on the login path.
+ */
+const FAILURE_WINDOW_MS = 5 * 60 * 1000;
+const MAX_CONSECUTIVE_FAILURES = 5;
+const failures = new Map<string, { count: number; at: number }>();
+
+/** Records one failure for this user and returns the new consecutive count. */
+function recordFailure(userId: string): number {
+	const now = Date.now();
+	const previous = failures.get(userId);
+	const count = previous && now - previous.at < FAILURE_WINDOW_MS ? previous.count + 1 : 1;
+	failures.set(userId, { count, at: now });
+	return count;
+}
+
+function tooManyRequests(): NextResponse {
+	return NextResponse.json(
+		{ error: "Too many attempts. Try again shortly." },
+		{ status: 429, headers: { "Retry-After": "60" } },
+	);
+}
 
 export async function POST(request: Request) {
 	const env = getEnv();
 	const jar = await cookies();
 	const token = jar.get(SESSION_COOKIE)?.value;
 
-	const pending = await getPendingTwoFactorSession(env, token);
-	// No pending session: expired, already promoted, or never existed.
-	if (!pending || !token) {
-		return NextResponse.json({ error: "Your sign-in expired. Start again." }, { status: 401 });
+	// Checked before anything is read from the database, so an unauthenticated
+	// flood costs one map lookup.
+	if (!(await allowAttempt(env, "twoFactorPerIp", `ip:${getClientIp(request, env)}`))) {
+		return tooManyRequests();
 	}
 
-	// Keyed by the session, not the IP: one browser's attempts are its own.
-	if (!(await allowAttempt(env, "twoFactor", pending.session.id))) {
-		return NextResponse.json(
-			{ error: "Too many attempts. Try again shortly." },
-			{ status: 429, headers: { "Retry-After": "60" } },
-		);
+	const pending = await getPendingTwoFactorSession(env, token);
+	// No pending session: expired, already promoted, destroyed by too many
+	// failures, or never existed.
+	if (!pending || !token) {
+		return NextResponse.json({ error: EXPIRED }, { status: 401 });
+	}
+
+	// Keyed by the user: a fresh pending session is one `/api/auth/login` away,
+	// so a session key is a budget the attacker resets at will.
+	if (!(await allowAttempt(env, "twoFactor", `user:${pending.user.id}`))) {
+		return tooManyRequests();
 	}
 
 	const body = await readTwoFactorBody(request);
@@ -86,10 +132,19 @@ export async function POST(request: Request) {
 		}
 	}
 
-	if (!method) return NextResponse.json({ error: INVALID }, { status: 400 });
+	if (!method) {
+		if (recordFailure(user.id) >= MAX_CONSECUTIVE_FAILURES) {
+			// The half-authenticated session is spent: prove the password again.
+			failures.delete(user.id);
+			await deleteSession(env, token);
+			return NextResponse.json({ error: EXPIRED }, { status: 401 });
+		}
+		return NextResponse.json({ error: INVALID }, { status: 400 });
+	}
+	failures.delete(user.id);
 
 	if (!(await promotePendingSession(env, token))) {
-		return NextResponse.json({ error: "Your sign-in expired. Start again." }, { status: 401 });
+		return NextResponse.json({ error: EXPIRED }, { status: 401 });
 	}
 
 	await recordAuthActivity(env, {

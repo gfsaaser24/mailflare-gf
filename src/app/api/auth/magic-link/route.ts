@@ -19,7 +19,11 @@ import { sendSystemEmail } from "@/lib/email/system";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import { getClientIp } from "@/lib/http/ip";
 import { readJsonBody } from "@/lib/http/request";
-import { normaliseEmail, recordRecoveryActivity } from "../forgot-password/utils";
+import {
+	deferRecoveryWork,
+	normaliseEmail,
+	recordRecoveryActivity,
+} from "../forgot-password/utils";
 import { MAGIC_LINK_TTL_MS, magicLinkRequestSchema } from "./utils";
 
 function neutral(): NextResponse {
@@ -45,21 +49,25 @@ export async function POST(request: Request) {
 	}
 	const email = normaliseEmail(parsed.data.email);
 
+	// Per-IP, then the bot check, then per-EMAIL: the per-email budget is the
+	// one an attacker can aim at somebody else's account, so a request that
+	// never passed Turnstile must not be able to spend it.
 	if (!(await allowAttempt(env, "magicLink", rateLimitKeyForRequest(request)))) {
 		return NextResponse.json(
 			{ error: "Too many requests. Try again shortly." },
 			{ status: 429, headers: { "Retry-After": "900" } },
 		);
 	}
+
+	if (!(await verifyTurnstileToken(env, request, (body as Record<string, unknown>).turnstileToken))) {
+		return NextResponse.json({ error: "Verification failed. Please try again." }, { status: 400 });
+	}
+
 	if (!(await allowAttempt(env, "magicLinkPerEmail", email))) {
 		return NextResponse.json(
 			{ error: "Too many requests. Try again shortly." },
 			{ status: 429, headers: { "Retry-After": "3600" } },
 		);
-	}
-
-	if (!(await verifyTurnstileToken(env, request, (body as Record<string, unknown>).turnstileToken))) {
-		return NextResponse.json({ error: "Verification failed. Please try again." }, { status: 400 });
 	}
 
 	// Checked before the lookup: a 500 that only fired for real accounts would
@@ -83,10 +91,14 @@ export async function POST(request: Request) {
 	const recoveryAddress = user?.resetEmail?.trim();
 	if (!user || user.disabled || !recoveryAddress) return neutral();
 
-	const requestIp = getClientIp(request);
-	try {
+	// Detached, exactly as in `/api/auth/forgot-password`: the token insert and
+	// the call to the mail transport are the only work a known address does, so
+	// awaiting them here timed the answer the body refuses to give.
+	const requestIp = getClientIp(request, env);
+	const userId = user.id;
+	deferRecoveryWork("Magic link email", async () => {
 		const token = await issueAuthToken(env, {
-			userId: user.id,
+			userId,
 			purpose: "magic_link",
 			ttlMs: MAGIC_LINK_TTL_MS,
 			requestIp,
@@ -102,16 +114,11 @@ export async function POST(request: Request) {
 			text: mail.text,
 			html: mail.html,
 		});
-	} catch (error) {
-		// Never the token, never the address: only that delivery failed.
-		console.error("Magic link email could not be sent", error instanceof Error ? error.message : error);
-		return neutral();
-	}
-
-	await recordRecoveryActivity(env, {
-		action: "auth.magic_link_requested",
-		userId: user.id,
-		request,
+		await recordRecoveryActivity(env, {
+			action: "auth.magic_link_requested",
+			userId,
+			request,
+		});
 	});
 	return neutral();
 }

@@ -46,6 +46,21 @@ surface, don't spread `process.env` reads around. `BUCKET` is an R2Bucket-like a
   (`src/lib/auth/tokens.ts`).
 - TOTP is optional per user and can be required per organisation. Secrets are encrypted
   with `AUTH_ENCRYPTION_KEY`.
+- The organisation TOTP requirement is enforced in ONE place,
+  `src/lib/auth/two-factor-policy.ts`, and both doors call it: `withOrg()` and
+  `requireUserForRoute()` (`src/lib/auth/cookies.ts`), which is what a route that resolves
+  its own cookie session must use — bare `requireUser()` skipped the gate and threw a 500
+  at anonymous callers. The enrolment allowlist is an EXACT, decoded, case-sensitive set of
+  paths; anything it cannot reduce (bad percent-encoding, a `.`/`..` segment, a doubled
+  slash) is simply not allowlisted.
+- `/api/auth/two-factor/verify` budgets attempts per USER (5 per 5 min) and per IP (20 per
+  5 min) — never per pending session, since a new one is a login away. Five consecutive
+  failures delete the pending session, so the password step has to be repeated.
+- `/api/auth/forgot-password` and `/api/auth/magic-link` run per-IP limit → Turnstile →
+  per-email limit, so a bot cannot burn somebody else's three-per-hour budget. Issuing the
+  token and mailing it are detached from the response (`deferRecoveryWork` in
+  `src/app/api/auth/forgot-password/utils.ts`), so a known and an unknown address leave by
+  the same path in the same time. Tests await `flushRecoveryWork()`.
 - `mailboxes.agent_mail` marks an inbox an automated agent owns. TOTP and that flag are
   mutually exclusive on the OWNING account (`mailboxes.user_id`, never a delegate):
   `/api/auth/two-factor/setup|enable` answer 400 `two_factor_unavailable_agent_mail` for
@@ -59,6 +74,8 @@ surface, don't spread `process.env` reads around. `BUCKET` is an R2Bucket-like a
   only, so the setup wizard can still boot an unconfigured container.
 - `GET /api/health` returns `{ ok: true }` and nothing else; it is the Docker HEALTHCHECK.
   `/api/setup/status` only discloses the primary hostname while the instance is unclaimed.
+- Client IP comes from `getClientIp(request, env?)` (`src/lib/http/ip.ts`), which reads
+  `AppEnv.TRUST_CF_HEADERS` and never `process.env` directly.
 - `TRUST_CF_HEADERS=true` only once the hostname is actually behind the Cloudflare proxy
   and Traefik trusts Cloudflare's IP ranges — otherwise `CF-Connecting-IP` is free to
   forge. Runbook: `docs/runbooks/cloudflare-proxy.md`.
