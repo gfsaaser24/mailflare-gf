@@ -1,4 +1,5 @@
 import { getUserFromSession } from "@/lib/auth/session";
+import { enforceTwoFactorPolicy } from "@/lib/auth/two-factor-policy";
 import { getEnv } from "@/lib/cloudflare";
 import { getRealtimeEmitter } from "@/lib/realtime/emitter";
 import { getSessionTokenFromRequest } from "@/lib/realtime/utils";
@@ -14,6 +15,10 @@ export async function GET(request: Request) {
 	if (!user || user.disabled) {
 		return new Response("Unauthorized", { status: 401 });
 	}
+	// The stream carries sender, subject and message ids for every inbound mail,
+	// so it sits behind the same organisation two-factor gate as every other door.
+	const gated = await enforceTwoFactorPolicy(env, user, request);
+	if (gated) return gated;
 
 	const emitter = getRealtimeEmitter();
 	const encoder = new TextEncoder();
