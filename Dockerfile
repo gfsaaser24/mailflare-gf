@@ -10,6 +10,12 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# The Turnstile site key is read by a client component, so Next inlines it into the
+# bundle at build time; a runtime-only variable would leave the widget unable to
+# produce a token and, with Turnstile failing closed in production, sign-in refused.
+# Mark it as a build variable in Coolify so it arrives as a --build-arg.
+ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
+ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
 RUN npm run build
 
 FROM node:22-alpine AS runner
