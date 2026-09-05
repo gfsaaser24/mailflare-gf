@@ -56,3 +56,4 @@ mailflare-landing
 
 # local secrets (server creds, ssh keys)
 .secrets/
+.foreman/
