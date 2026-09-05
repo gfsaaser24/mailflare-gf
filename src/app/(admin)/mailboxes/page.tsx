@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Plus, UsersRound } from "lucide-react";
+import { Bot, Plus, UsersRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -276,6 +276,12 @@ export default function MailboxesPage() {
 											<span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
 												<UsersRound className="h-3 w-3" />
 												Shared
+											</span>
+										)}
+										{mailbox.agentMail && (
+											<span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+												<Bot className="h-3 w-3" />
+												Agent mail
 											</span>
 										)}
 										{mailbox.disabled && (

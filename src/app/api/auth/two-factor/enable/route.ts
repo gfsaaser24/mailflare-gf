@@ -18,6 +18,7 @@ import { decryptSecret } from "@/lib/auth/crypto";
 import { verifyPassword } from "@/lib/auth/password";
 import { SESSION_COOKIE } from "@/lib/auth/session";
 import { generateBackupCodes, serializeBackupCodeHashes, verifyTotpCode } from "@/lib/auth/totp";
+import { agentMailBlocksTwoFactor } from "@/lib/mailboxes/agent-mail";
 import {
 	asString,
 	deleteOtherSessions,
@@ -27,6 +28,11 @@ import {
 } from "../shared";
 
 export const POST = withOrg(async ({ db, env, user, orgId }, request) => {
+	// Same refusal as `/setup`, checked again here: the flag can be set on a
+	// mailbox between starting and finishing enrolment.
+	const blocked = await agentMailBlocksTwoFactor(db, user.id, orgId);
+	if (blocked) return NextResponse.json(blocked, { status: 400 });
+
 	const body = await readTwoFactorBody(request);
 	const code = asString(body.code);
 	const currentPassword = asString(body.currentPassword);

@@ -8,6 +8,7 @@ import type { AccountRouteParams } from "../types";
 import { newId } from "@/lib/ids";
 import { accountMailboxSchema } from "@/lib/validators";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
+import { ownerBlocksAgentMail } from "@/lib/mailboxes/agent-mail";
 
 export const GET = withOrg<AccountRouteParams>(async (ctx, _request, { params }) => {
 	const forbidden = requireTeamAdmin(ctx);
@@ -22,6 +23,7 @@ export const GET = withOrg<AccountRouteParams>(async (ctx, _request, { params })
 		localPart: mailboxes.localPart,
 		displayName: mailboxes.displayName,
 		domainId: mailboxes.domainId,
+		agentMail: mailboxes.agentMail,
 		hostname: domains.hostname,
 	}).from(mailboxes).innerJoin(domains, eq(mailboxes.domainId, domains.id)).where(and(ctx.scoped(mailboxes), eq(mailboxes.userId, account.id)));
 	return NextResponse.json({ mailboxes: rows });
@@ -42,6 +44,12 @@ export const POST = withOrg<AccountRouteParams>(async (ctx, request, { params })
 
 	const parsed = accountMailboxSchema.safeParse(await request.json());
 	if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+
+	// An agent inbox and a second factor on its owner are mutually exclusive.
+	if (parsed.data.agentMail === true) {
+		const blocked = await ownerBlocksAgentMail(db, account.id, ctx.orgId);
+		if (blocked) return NextResponse.json(blocked, { status: 400 });
+	}
 
 	const [domain] = await db
 		.select()
@@ -71,6 +79,7 @@ export const POST = withOrg<AccountRouteParams>(async (ctx, request, { params })
 			localPart,
 			displayName: parsed.data.displayName,
 			type: "personal",
+			agentMail: parsed.data.agentMail ?? false,
 		}),
 	);
 

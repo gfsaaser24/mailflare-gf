@@ -1,0 +1,1 @@
+ALTER TABLE "mailboxes" ADD COLUMN "agent_mail" boolean DEFAULT false NOT NULL;

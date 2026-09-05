@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   fetchMailbox,
   fetchSharedInboxAccess,
@@ -34,6 +35,7 @@ export default function MailboxSettingsPage() {
   const qc = useQueryClient();
   const [displayName, setDisplayName] = useState("");
   const [useAllDomains, setUseAllDomains] = useState(true);
+  const [agentMail, setAgentMail] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
 
   const mailbox = useQuery({
@@ -46,15 +48,18 @@ export default function MailboxSettingsPage() {
     if (mailbox.data) {
       setDisplayName(mailbox.data.displayName ?? "");
       setUseAllDomains(mailbox.data.useAllDomains);
+      setAgentMail(!!mailbox.data.agentMail);
     }
   }, [mailbox.data]);
 
   const updateName = useMutation({
-    mutationFn: () => updateMailboxSettings(mailboxId, { displayName, useAllDomains }),
+    mutationFn: () => updateMailboxSettings(mailboxId, { displayName, useAllDomains, agentMail }),
     onSuccess: (updatedMailbox) => {
       qc.setQueryData(["mailbox", mailboxId], updatedMailbox);
       qc.invalidateQueries({ queryKey: ["mailboxes"] });
     },
+    // A refused flag must not leave the switch showing a state the server rejected.
+    onError: () => setAgentMail(!!mailbox.data?.agentMail),
   });
 
   const sharedAccess = useQuery({
@@ -94,6 +99,9 @@ export default function MailboxSettingsPage() {
         <div className="flex shrink-0 items-center gap-2">
           {mailbox.data?.type === "shared" && (
             <Badge variant="secondary">Shared</Badge>
+          )}
+          {mailbox.data?.agentMail && (
+            <Badge variant="secondary">Agent mail</Badge>
           )}
           {mailbox.data?.isPrimary && (
             <Badge variant="secondary">Primary</Badge>
@@ -147,6 +155,21 @@ export default function MailboxSettingsPage() {
               </span>
             </span>
           </label>
+          <div className="flex items-start justify-between gap-4 rounded-xl bg-neutral-50 p-4">
+            <span>
+              <span className="block text-sm font-medium text-neutral-900">Agent mail</span>
+              <span className="mt-1 block text-sm text-neutral-500">
+                This inbox is operated by an automated agent. Two-factor authentication is
+                unavailable for the owning account while this is on.
+              </span>
+            </span>
+            <Switch
+              checked={agentMail}
+              disabled={mailbox.isLoading || updateName.isPending}
+              onCheckedChange={setAgentMail}
+              aria-label="Agent mail"
+            />
+          </div>
           {updateName.isError && (
             <p className="text-sm text-red-600">
               {updateName.error instanceof Error

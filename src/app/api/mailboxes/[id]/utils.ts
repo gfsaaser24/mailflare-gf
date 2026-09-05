@@ -19,6 +19,7 @@ export function selectMailboxForOrg({ db, scoped }: OrgContext, mailboxId: strin
 		useAllDomains: mailboxes.useAllDomains,
 			avatarKey: mailboxes.avatarKey,
 			type: mailboxes.type,
+			agentMail: mailboxes.agentMail,
 			disabled: mailboxes.disabled,
 			createdAt: mailboxes.createdAt,
 			hostname: domains.hostname,
@@ -37,5 +38,6 @@ export function getMailboxUpdateValues(input: MailboxUpdateValues): MailboxUpdat
 	if ("autoReplySubject" in input) values.autoReplySubject = input.autoReplySubject?.trim() || "Out of office";
 	if ("autoReplyBody" in input) values.autoReplyBody = input.autoReplyBody?.trim() || "";
 	if ("useAllDomains" in input) values.useAllDomains = input.useAllDomains;
+	if ("agentMail" in input) values.agentMail = input.agentMail;
 	return values;
 }

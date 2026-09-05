@@ -65,6 +65,8 @@ export const mailboxSchema = z.object({
 	localPart: z.string().min(1).max(64),
 	displayName: z.string().optional(),
 	type: z.enum(["personal", "shared"]).optional(),
+	/** The inbox is run by an automated agent; see `src/lib/mailboxes/agent-mail.ts`. */
+	agentMail: z.boolean().optional(),
 });
 
 export const updateManagedAccountSchema = z.object({
@@ -146,6 +148,7 @@ export const accountMailboxSchema = z.object({
 	domainId: z.string().min(1),
 	localPart: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._%+-]+$/),
 	displayName: z.string().trim().max(100).optional(),
+	agentMail: z.boolean().optional(),
 });
 
 export const updateMailboxSchema = z.object({
@@ -155,6 +158,12 @@ export const updateMailboxSchema = z.object({
 	autoReplySubject: z.string().trim().max(200).optional(),
 	autoReplyBody: z.string().max(10_000).optional(),
 	useAllDomains: z.boolean().optional(),
+	/**
+	 * Marks the inbox as operated by an automated agent. Turning it on is refused
+	 * while the owning account has two-factor authentication
+	 * (`src/lib/mailboxes/agent-mail.ts`); turning it off is always allowed.
+	 */
+	agentMail: z.boolean().optional(),
 });
 
 export const folderSchema = z.object({

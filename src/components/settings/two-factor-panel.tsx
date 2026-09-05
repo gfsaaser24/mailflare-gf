@@ -23,6 +23,10 @@ type TwoFactorStatus = {
 	enabledAt: string | null;
 	backupCodesRemaining: number;
 	requiredByOrganization: boolean;
+	/** This account owns an inbox an agent runs, so it cannot take a second factor. */
+	blockedByAgentMail: boolean;
+	/** The addresses that do the blocking, so the explanation can name them. */
+	agentMailAddresses: string[];
 };
 
 type SetupPayload = {
@@ -70,6 +74,8 @@ export function TwoFactorPanel() {
 			enabledAt: data.enabledAt ?? null,
 			backupCodesRemaining: data.backupCodesRemaining ?? 0,
 			requiredByOrganization: !!data.requiredByOrganization,
+			blockedByAgentMail: !!data.blockedByAgentMail,
+			agentMailAddresses: data.agentMailAddresses ?? [],
 		});
 	}, []);
 
@@ -243,10 +249,24 @@ export function TwoFactorPanel() {
 		);
 	}
 
-	const mustEnrol = status.requiredByOrganization && !status.enabled;
+	// An agent-mail owner is exempt from the organisation policy (`withOrg()` and
+	// `/api/auth/me` agree), so the requirement is not shown to them at all.
+	const orgRequires = status.requiredByOrganization && !status.blockedByAgentMail;
+	const mustEnrol = orgRequires && !status.enabled;
 
 	return (
 		<div className="space-y-6">
+			{status.blockedByAgentMail && (
+				<p className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+					Two-factor authentication is not available on this account:{" "}
+					{status.agentMailAddresses.length > 0
+						? status.agentMailAddresses.join(", ")
+						: "one of its inboxes"}{" "}
+					{status.agentMailAddresses.length === 1 ? "is" : "are"} operated by an automated agent,
+					and an agent cannot type a code. Turn agent mail off in the mailbox settings first.
+				</p>
+			)}
+
 			{mustEnrol && (
 				<p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
 					Your organisation requires two-factor authentication. Set it up now to keep using your
@@ -292,7 +312,7 @@ export function TwoFactorPanel() {
 				</div>
 			)}
 
-			{!status.enabled && !setup && (
+			{!status.enabled && !setup && !status.blockedByAgentMail && (
 				<Button type="button" onClick={() => void startSetup()} disabled={busy}>
 					{busy ? "Working..." : "Set up"}
 				</Button>
@@ -379,7 +399,7 @@ export function TwoFactorPanel() {
 						</Button>
 					</form>
 
-					{!status.requiredByOrganization && (
+					{!orgRequires && (
 						<form onSubmit={(event) => void disable(event)} className="space-y-3">
 							<Label htmlFor="disableCode">Turn off two-factor</Label>
 							<p className="text-sm text-neutral-500">

@@ -19,7 +19,7 @@ export async function fetchMailbox(id: string): Promise<MailboxDetail> {
 
 export async function updateMailboxSettings(
 	id: string,
-	input: { displayName: string; useAllDomains: boolean },
+	input: { displayName: string; useAllDomains: boolean; agentMail?: boolean },
 ): Promise<MailboxDetail> {
 	const res = await authFetch(`/api/mailboxes/${id}`, {
 		method: "PATCH",
@@ -29,7 +29,9 @@ export async function updateMailboxSettings(
 	const json = (await res.json()) as MailboxDetailResponse;
 
 	if (!res.ok || !json.mailbox) {
-		throw new Error(json.error ?? "Failed to update mailbox");
+		// A refusal such as `owner_has_two_factor` carries a sentence for the user
+		// next to the machine code; show that when it is there.
+		throw new Error(json.message ?? json.error ?? "Failed to update mailbox");
 	}
 
 	clearMailboxesCache();

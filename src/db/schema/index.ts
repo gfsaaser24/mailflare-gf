@@ -116,6 +116,14 @@ export const mailboxes = pgTable(
 		avatarKey: text("avatar_key"),
 		type: text("type", { enum: ["personal", "shared"] }).notNull().default("personal"),
 		useAllDomains: boolean("use_all_domains").notNull().default(true),
+		/**
+		 * The inbox is operated by an automated agent (Cloudflare Email Service /
+		 * Agents SDK), so nobody can type a code for it. Two-factor authentication
+		 * is unavailable to the owning account while any of its mailboxes has this
+		 * set, and such an owner is exempt from the organisation's requirement
+		 * (`src/lib/mailboxes/agent-mail.ts`).
+		 */
+		agentMail: boolean("agent_mail").notNull().default(false),
 		disabled: boolean("disabled").notNull().default(false),
 		createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
 			.notNull()

@@ -17,6 +17,13 @@ export const AUTH_ME_QUERY_KEY = ["auth", "me"] as const;
 export type AuthMeTwoFactor = {
 	enabled: boolean;
 	requiredByOrganization: boolean;
+	/**
+	 * This account owns a mailbox flagged as agent mail, so it cannot enrol at
+	 * all and is exempt from the organisation policy. The server already reports
+	 * `requiredByOrganization: false` for such a user; the flag is here so the
+	 * UI can say why.
+	 */
+	blockedByAgentMail?: boolean;
 };
 
 /** `AuthMeResponse` plus the fields added after `src/components/platform/types.ts` was written. */
@@ -26,8 +33,14 @@ export type AuthMeResult = AuthMeResponse & {
 	twoFactor?: AuthMeTwoFactor;
 };
 
-/** True when the organisation forces two-factor and this user has not enrolled. */
+/**
+ * True when the organisation forces two-factor and this user has not enrolled.
+ *
+ * An agent-mail owner is never sent to the setup panel: they cannot enrol, so
+ * the redirect would be a loop with no way out.
+ */
 export function mustEnrolTwoFactor(data: AuthMeResult | undefined): boolean {
+	if (data?.twoFactor?.blockedByAgentMail) return false;
 	return !!data?.twoFactor?.requiredByOrganization && !data.twoFactor.enabled;
 }
 

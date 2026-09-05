@@ -46,7 +46,9 @@ export function AuthGuard({ children, mode = "protected", requireMailbox, requir
 
 				// The organisation requires two-factor and this user has not enrolled:
 				// `withOrg()` is already answering 403 for everything else, so the only
-				// useful place to be is the panel that sets it up.
+				// useful place to be is the panel that sets it up. An owner of an agent
+				// mailbox is exempt on both sides and `mustEnrolTwoFactor` reads false
+				// for them, so they are never sent here.
 				if (mustEnrolTwoFactor(data) && !pathname.startsWith(TWO_FACTOR_SETUP_PATH)) {
 					router.replace(TWO_FACTOR_SETUP_PATH);
 					return;

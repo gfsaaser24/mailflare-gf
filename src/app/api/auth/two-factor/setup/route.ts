@@ -16,9 +16,15 @@ import { users } from "@/db/schema";
 import { withOrg } from "@/lib/api/with-org";
 import { encryptSecret } from "@/lib/auth/crypto";
 import { buildOtpauthUrl, generateTotpSecret, getTotpIssuer } from "@/lib/auth/totp";
+import { agentMailBlocksTwoFactor } from "@/lib/mailboxes/agent-mail";
 import { loadTwoFactorState } from "../shared";
 
 export const POST = withOrg(async ({ db, env, user, orgId }) => {
+	// An inbox run by an agent has nobody to read a code out of an app, so the
+	// owning account cannot take on a second factor at all.
+	const blocked = await agentMailBlocksTwoFactor(db, user.id, orgId);
+	if (blocked) return NextResponse.json(blocked, { status: 400 });
+
 	const state = await loadTwoFactorState(db, orgId, user.id);
 	if (!state) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	if (state.totpEnabledAt) {

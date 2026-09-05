@@ -9,6 +9,8 @@ export type Mailbox = {
 	permission?: "read_only" | "send_as" | "send_on_behalf" | "full_access";
 	isPrimary?: boolean;
 	disabled?: boolean;
+	/** The inbox is operated by an automated agent (see `src/lib/mailboxes/agent-mail.ts`). */
+	agentMail?: boolean;
 	/** Set by `GET /api/mailboxes?scope=organization` only. */
 	ownerUserId?: string;
 	ownerEmail?: string;

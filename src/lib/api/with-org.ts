@@ -88,6 +88,7 @@ import {
 import { authenticateApiKey, isApiAuthFailure, requireScope } from "@/lib/api/auth";
 import { SESSION_COOKIE, getUserFromSession } from "@/lib/auth/session";
 import { organizationRequiresTwoFactor } from "@/lib/auth/totp";
+import { ownsAgentMailMailbox } from "@/lib/mailboxes/agent-mail";
 import type { SessionUser } from "@/lib/auth/types";
 import { getEnv } from "@/lib/cloudflare";
 import {
@@ -201,16 +202,22 @@ function isTwoFactorEnrolmentRoute(request: Request): boolean {
  * 403 when the organisation forces two-factor and this session's user has not
  * enrolled. API keys are exempt: they are machine credentials with their own
  * scopes and revocation, and an agent cannot type a code.
+ *
+ * The owner of an agent mailbox is exempt for the same reason: the two-factor
+ * routes refuse to enrol them at all (`src/lib/mailboxes/agent-mail.ts`), so
+ * the requirement would be a locked door with no key. Nobody else is relaxed —
+ * delegated access to a shared agent inbox does not count.
  */
 async function twoFactorGate(
 	db: AppDatabase,
 	orgId: string,
 	request: Request,
-	session: { enrolled: boolean } | null,
+	session: { enrolled: boolean; userId: string } | null,
 ): Promise<NextResponse | null> {
 	if (!session || session.enrolled) return null;
 	if (isTwoFactorEnrolmentRoute(request)) return null;
 	if (!(await organizationRequiresTwoFactor(db, orgId))) return null;
+	if (await ownsAgentMailMailbox(db, session.userId, orgId)) return null;
 	return json("two_factor_required", 403);
 }
 
@@ -245,7 +252,7 @@ export function withOrg<T extends RouteContext = RouteContext>(
 
 		let principal: OrgPrincipal | null = null;
 		/** Null on the API-key path; the enrolment state of the cookie session otherwise. */
-		let session: { enrolled: boolean } | null = null;
+		let session: { enrolled: boolean; userId: string } | null = null;
 
 		const jar = await cookies();
 		const sessionUser = await getUserFromSession(env, jar.get(SESSION_COOKIE)?.value);
@@ -253,7 +260,7 @@ export function withOrg<T extends RouteContext = RouteContext>(
 			// Disabled accounts are treated as unauthenticated, never as forbidden.
 			if (sessionUser.disabled) return json("Unauthorized", 401);
 			principal = { ...sessionUser, kind: "session", scopes: ["*"], apiKeyId: null };
-			session = { enrolled: !!sessionUser.totpEnabledAt };
+			session = { enrolled: !!sessionUser.totpEnabledAt, userId: sessionUser.id };
 		} else if (options.allowApiKey) {
 			const auth = await authenticateApiKey(env, request.headers.get("authorization"), request);
 			// A revoked or expired key is a real key in a bad state: say so, rather

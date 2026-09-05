@@ -7,6 +7,7 @@ import { withOrg } from "@/lib/api/with-org";
 // the only session endpoint the client already calls on every page.
 import { isPlatformOperator } from "@/lib/platform/guard";
 import { organizationRequiresTwoFactor } from "@/lib/auth/totp";
+import { ownsAgentMailMailbox } from "@/lib/mailboxes/agent-mail";
 import { hasPrimaryDomain, userHasMailboxes } from "@/lib/user";
 
 export const GET = withOrg(async ({ db, env, user, orgId, scoped }) => {
@@ -44,9 +45,17 @@ export const GET = withOrg(async ({ db, env, user, orgId, scoped }) => {
 
 	// The client uses this to send a user who must enrol to the settings panel;
 	// `withOrg()` is what actually blocks the rest of the API.
+	//
+	// An owner of an agent mailbox cannot enrol at all, so the same exemption
+	// `withOrg()` applies is reported here: `requiredByOrganization` reads false
+	// for them (no redirect loop) and `blockedByAgentMail` says why.
 	let requiredByOrganization = false;
+	let blockedByAgentMail = false;
 	try {
-		requiredByOrganization = await organizationRequiresTwoFactor(db, orgId);
+		[requiredByOrganization, blockedByAgentMail] = await Promise.all([
+			organizationRequiresTwoFactor(db, orgId),
+			ownsAgentMailMailbox(db, user.id, orgId),
+		]);
 	} catch {
 		// A policy read that fails must not invalidate the session.
 	}
@@ -80,7 +89,8 @@ export const GET = withOrg(async ({ db, env, user, orgId, scoped }) => {
 		isSetup,
 		twoFactor: {
 			enabled: !!row.totpEnabledAt,
-			requiredByOrganization,
+			requiredByOrganization: requiredByOrganization && !blockedByAgentMail,
+			blockedByAgentMail,
 		},
 	});
 });

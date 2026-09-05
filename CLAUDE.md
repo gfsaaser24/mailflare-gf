@@ -46,6 +46,12 @@ surface, don't spread `process.env` reads around. `BUCKET` is an R2Bucket-like a
   (`src/lib/auth/tokens.ts`).
 - TOTP is optional per user and can be required per organisation. Secrets are encrypted
   with `AUTH_ENCRYPTION_KEY`.
+- `mailboxes.agent_mail` marks an inbox an automated agent owns. TOTP and that flag are
+  mutually exclusive on the OWNING account (`mailboxes.user_id`, never a delegate):
+  `/api/auth/two-factor/setup|enable` answer 400 `two_factor_unavailable_agent_mail` for
+  such an owner, `withOrg()` and `/api/auth/me` exempt them from the organisation's
+  `require_two_factor`, and setting the flag while the owner has TOTP is refused with 400
+  `owner_has_two_factor`. Rules live in `src/lib/mailboxes/agent-mail.ts`.
 - Turnstile fails closed in production: no `TURNSTILE_SECRET_KEY` means every protected
   request is refused (and one `console.error` at boot). In development the check is
   skipped. `getEnv()` also warns in production when `TURNSTILE_SECRET_KEY`,

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { mailboxes, users } from "@/db/schema";
 import { withOrg } from "@/lib/api/with-org";
 import { getMailboxAccessLevel } from "@/lib/mailboxes/access";
+import { ownerBlocksAgentMail } from "@/lib/mailboxes/agent-mail";
 import { deleteMailbox, MailboxCloudflareCleanupError } from "@/lib/mailboxes/delete";
 import { ensureMailboxDomainRouting } from "@/lib/mailboxes/domain-addresses";
 import { updateMailboxSchema } from "@/lib/validators";
@@ -47,6 +48,14 @@ export const PATCH = withOrg<MailboxRouteParams>(async (ctx, request, { params }
 
 	if (!existing || !access?.canManage) {
 		return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
+	}
+
+	// An agent cannot type a code, so the flag and the owner's second factor are
+	// mutually exclusive. Only turning it on is checked; clearing it is always
+	// allowed, and is how an owner frees themselves to enrol.
+	if (parsed.data.agentMail === true) {
+		const blocked = await ownerBlocksAgentMail(db, existing.userId, orgId);
+		if (blocked) return NextResponse.json(blocked, { status: 400 });
 	}
 
 	const updateValues = getMailboxUpdateValues(parsed.data);

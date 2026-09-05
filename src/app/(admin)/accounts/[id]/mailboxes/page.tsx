@@ -2,11 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
+import { Bot, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import type { ManagedAccount, ManagedDomain, ManagedMailbox } from "../types";
+
+/**
+ * `GET /api/accounts/[id]/mailboxes` also returns the agent-mail flag. The
+ * shared `ManagedMailbox` type is used by screens that do not care about it, so
+ * it is widened here rather than there.
+ */
+type AccountMailbox = ManagedMailbox & { agentMail?: boolean };
 import {
   addManagedMailbox,
   fetchManagedAccount,
@@ -18,7 +25,7 @@ import {
 export default function AccountMailboxesPage() {
   const { id } = useParams<{ id: string }>();
   const [account, setAccount] = useState<ManagedAccount | null>(null);
-  const [mailboxes, setMailboxes] = useState<ManagedMailbox[]>([]);
+  const [mailboxes, setMailboxes] = useState<AccountMailbox[]>([]);
   const [domains, setDomains] = useState<ManagedDomain[]>([]);
   const [localPart, setLocalPart] = useState("");
   const [domainId, setDomainId] = useState("");
@@ -91,8 +98,16 @@ export default function AccountMailboxesPage() {
               className="flex items-center justify-between rounded-2xl bg-neutral-50 px-4 py-3"
             >
               <span className="min-w-0">
-                <span className="block truncate font-medium">
-                  {mailbox.displayName || mailbox.localPart}
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="block truncate font-medium">
+                    {mailbox.displayName || mailbox.localPart}
+                  </span>
+                  {mailbox.agentMail && (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                      <Bot className="h-3 w-3" />
+                      Agent mail
+                    </span>
+                  )}
                 </span>
                 <span className="block truncate text-sm text-neutral-500">
                   {mailbox.localPart}@{mailbox.hostname}

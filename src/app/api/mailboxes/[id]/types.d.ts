@@ -9,4 +9,5 @@ export type MailboxUpdateValues = {
 	autoReplySubject?: string;
 	autoReplyBody?: string;
 	useAllDomains?: boolean;
+	agentMail?: boolean;
 };

@@ -5,6 +5,8 @@ export type MailboxDetail = {
 	localPart: string;
 	displayName: string | null;
 	useAllDomains: boolean;
+	/** The inbox is operated by an automated agent (see `src/lib/mailboxes/agent-mail.ts`). */
+	agentMail?: boolean;
 	hasAvatar?: boolean;
 	type?: "personal" | "shared";
 	permission?: "read_only" | "send_as" | "send_on_behalf" | "full_access";
@@ -17,6 +19,8 @@ export type MailboxDetail = {
 export type MailboxDetailResponse = {
 	mailbox?: MailboxDetail;
 	error?: string;
+	/** Human sentence that goes with a machine `error` code such as `owner_has_two_factor`. */
+	message?: string;
 };
 
 export type MailboxAvatarFormProps = {

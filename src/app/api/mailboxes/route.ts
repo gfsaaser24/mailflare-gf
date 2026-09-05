@@ -7,6 +7,7 @@ import { isAdmin } from "@/lib/auth/admin";
 import { newId } from "@/lib/ids";
 import { mailboxSchema } from "@/lib/validators";
 import { listOrganizationMailboxes } from "@/lib/mailboxes/access";
+import { ownerBlocksAgentMail } from "@/lib/mailboxes/agent-mail";
 import { ensureMailboxDomainRouting, getMailboxDomainAddresses } from "@/lib/mailboxes/domain-addresses";
 import { isQuotaExceededError, quotaErrorBody } from "@/lib/quotas/errors";
 import { releaseQuota, reserveQuota } from "@/lib/quotas/service";
@@ -81,6 +82,13 @@ export const POST = withOrg(async (ctx, request) => {
 		return NextResponse.json({ error: "Domain not found" }, { status: 404 });
 	}
 
+	// Same rule as `PATCH /api/mailboxes/[id]`: an agent inbox and a second
+	// factor on its owner cannot coexist.
+	if (parsed.data.agentMail === true) {
+		const blocked = await ownerBlocksAgentMail(db, ownerUserId, orgId);
+		if (blocked) return NextResponse.json(blocked, { status: 400 });
+	}
+
 	const localPart = parsed.data.localPart.toLowerCase();
 	const [existing] = await db
 		.select()
@@ -123,6 +131,7 @@ export const POST = withOrg(async (ctx, request) => {
 			localPart,
 			displayName: parsed.data.displayName,
 			type: mailboxType,
+			agentMail: parsed.data.agentMail ?? false,
 		}),
 	);
 	try {
@@ -145,5 +154,6 @@ export const POST = withOrg(async (ctx, request) => {
 		id,
 		address,
 		type: mailboxType,
+		agentMail: parsed.data.agentMail ?? false,
 	});
 });
