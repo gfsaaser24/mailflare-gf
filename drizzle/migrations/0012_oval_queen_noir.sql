@@ -1,0 +1,2 @@
+CREATE INDEX "messages_mailbox_status_created_idx" ON "messages" USING btree ("mailbox_id","status","created_at");--> statement-breakpoint
+CREATE INDEX "messages_mailbox_status_unfiled_created_idx" ON "messages" USING btree ("mailbox_id","status","created_at") WHERE "messages"."folder_id" IS NULL;
