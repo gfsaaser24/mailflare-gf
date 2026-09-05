@@ -1,13 +1,43 @@
 import { NextResponse } from "next/server";
 // ilike: SQLite's LIKE was case-insensitive; Postgres' LIKE is not.
-import { eq, desc, and, ilike as like, or, count, isNull, inArray, lte, gt } from "drizzle-orm";
+import { eq, desc, and, ilike as like, or, count, isNull, inArray, lte, gt, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { messages } from "@/db/schema";
 import { withOrg } from "@/lib/api/with-org";
 import { getContactDisplayNameMap } from "@/lib/contacts/service";
 import { normalizeEmailAddress } from "@/lib/email/address";
-import { buildSnippet } from "@/lib/email/parse";
 import { getMailboxAccessLevel, listAccessibleMailboxes } from "@/lib/mailboxes/access";
+
+/**
+ * List columns only.
+ *
+ * `text_body`/`html_body` are the two fat columns on `messages` and the list
+ * never renders them: rows show the stored `snippet`. `raw_r2_key` and the
+ * generated `search_vector` have no business in a response at all.
+ */
+const listColumns = {
+	id: messages.id,
+	organizationId: messages.organizationId,
+	userId: messages.userId,
+	mailboxId: messages.mailboxId,
+	conversationId: messages.conversationId,
+	direction: messages.direction,
+	providerMessageId: messages.providerMessageId,
+	folderId: messages.folderId,
+	fromAddr: messages.fromAddr,
+	toAddr: messages.toAddr,
+	subject: messages.subject,
+	snippet: messages.snippet,
+	status: messages.status,
+	read: messages.read,
+	starred: messages.starred,
+	snoozedUntil: messages.snoozedUntil,
+	threadId: messages.threadId,
+	createdAt: messages.createdAt,
+};
+
+/** Below this, `websearch_to_tsquery` has nothing useful to lex; fall back to LIKE. */
+const FULL_TEXT_MIN_LENGTH = 3;
 
 export const GET = withOrg(async ({ env, db, user, orgId, scoped }, request) => {
 	const url = new URL(request.url);
@@ -65,14 +95,20 @@ export const GET = withOrg(async ({ env, db, user, orgId, scoped }, request) => 
 		conditions.push(eq(messages.read, false));
 	}
 	if (query) {
-		const pattern = `%${query}%`;
-		const queryCondition = or(
-			like(messages.fromAddr, pattern),
-			like(messages.toAddr, pattern),
-			like(messages.subject, pattern),
-			like(messages.snippet, pattern),
-		);
-		if (queryCondition) conditions.push(queryCondition);
+		if (query.length >= FULL_TEXT_MIN_LENGTH) {
+			// `messages_search_idx` (GIN over the generated `search_vector`) covers
+			// subject + participants + text body. Beats four unanchored ILIKEs.
+			conditions.push(sql`${messages.searchVector} @@ websearch_to_tsquery('simple', ${query})`);
+		} else {
+			const pattern = `%${query}%`;
+			const queryCondition = or(
+				like(messages.fromAddr, pattern),
+				like(messages.toAddr, pattern),
+				like(messages.subject, pattern),
+				like(messages.snippet, pattern),
+			);
+			if (queryCondition) conditions.push(queryCondition);
+		}
 	}
 	if (title) {
 		conditions.push(like(messages.subject, `%${title}%`));
@@ -81,17 +117,20 @@ export const GET = withOrg(async ({ env, db, user, orgId, scoped }, request) => 
 	// visible inside each `.where(...)` (see eslint-rules/require-org-scope.js).
 	const where = and(...conditions);
 
-	const [totalRow] = await db
-		.select({ total: count() })
-		.from(messages)
-		.where(and(scoped(messages), where));
-	const rows = await db
-		.select()
-		.from(messages)
-		.where(and(scoped(messages), where))
-		.orderBy(desc(messages.createdAt))
-		.limit(limit)
-		.offset(offset);
+	const [totalRows, rows] = await Promise.all([
+		db
+			.select({ total: count() })
+			.from(messages)
+			.where(and(scoped(messages), where)),
+		db
+			.select(listColumns)
+			.from(messages)
+			.where(and(scoped(messages), where))
+			.orderBy(desc(messages.createdAt))
+			.limit(limit)
+			.offset(offset),
+	]);
+	const totalRow = totalRows[0];
 	const mailboxNameMap = new Map(
 		accessibleMailboxes.map((mailbox) => [
 			mailbox.id,
@@ -112,12 +151,14 @@ export const GET = withOrg(async ({ env, db, user, orgId, scoped }, request) => 
 			] as const),
 		),
 	);
-	const enrichedRows = rows.map(({ rawR2Key: _rawR2Key, ...message }) => {
+	const enrichedRows = rows.map((message) => {
 		const contactMap = contactMapsByUserId.get(message.userId);
 		const accountName = message.mailboxId ? mailboxNameMap.get(message.mailboxId) : null;
 		return {
 			...message,
-			snippet: buildSnippet(message.textBody, message.htmlBody) || message.snippet,
+			// Stored snippet only. A row written before snippets existed shows its
+			// subject in the list instead; the bodies are not worth fetching here.
+			snippet: message.snippet,
 			fromContactName:
 				(message.direction === "outbound" ? accountName : null) ??
 				contactMap?.get(normalizeEmailAddress(message.fromAddr)) ??

@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownToLine, Play } from "lucide-react";
-import { formatAttachmentSize } from "@/app/(dashboard)/inbox/[messageId]/utils";
+import { formatAttachmentSize } from "@/app/(dashboard)/(mail)/inbox/[messageId]/utils";
 import type { MessageAttachmentCardProps } from "./message-attachment-card-types";
 import { getAttachmentFileUrl } from "./message-attachment-viewer-utils";
 import { getAttachmentVisual } from "./message-attachment-card-utils";

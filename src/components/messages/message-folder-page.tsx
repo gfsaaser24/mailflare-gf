@@ -11,6 +11,7 @@ import { useCompose } from "@/components/compose/compose-context";
 import { useMailSearch } from "@/components/mail-search/mail-search-context";
 import { useSelectedMailbox } from "@/components/mailbox-provider";
 import { usePageLoading } from "@/components/page-loading";
+import { RouteProgress } from "@/components/route-progress";
 import { useMessageCounts } from "@/hooks/use-message-counts";
 import { useMessages } from "@/hooks/use-messages";
 import type { BulkMessageAction } from "@/app/api/messages/bulk/types";
@@ -230,21 +231,33 @@ export function MessageFolderPage({
 	selection,
 }: MessageFolderPageProps) {
 	const { selectedMailbox, isLoading: mailboxesLoading } = useSelectedMailbox();
-	const { query } = useMailSearch();
+	// `deferredQuery` lags the input by a render or two, so typing never blocks on
+	// a list re-render; `query` still drives the "filters are active" copy.
+	const { query, deferredQuery } = useMailSearch();
 	const [offset, setOffset] = useState(0);
 	const [internalSelectedMessages, setInternalSelectedMessages] = useState<
 		Array<{ id: string; read: boolean }>
 	>([]);
 	const [pendingBulkAction, setPendingBulkAction] = useState(false);
 	const [unreadOnly, setUnreadOnly] = useState(false);
-	const { messages, isLoading, total, limit, updateMessages } = useMessages(config.folder, selectedMailbox?.id, {
-		query,
-		limit: pageSize,
-		offset,
-		read: unreadOnly ? "unread" : "all",
-	}, !mailboxesLoading, config.folderId);
+	const { messages, isLoading, isFetching, isPlaceholderData, total, limit, updateMessages } = useMessages(
+		config.folder,
+		selectedMailbox?.id,
+		{
+			query: deferredQuery,
+			limit: pageSize,
+			offset,
+			read: unreadOnly ? "unread" : "all",
+		},
+		!mailboxesLoading,
+		config.folderId,
+	);
 	const { counts } = useMessageCounts(selectedMailbox?.id, !mailboxesLoading);
-	usePageLoading(mailboxesLoading || isLoading);
+	// The previous folder/page is still on screen while the next one loads.
+	const showingStaleList = isPlaceholderData && isFetching;
+	// Only the very first load (nothing cached at all) arms the app-wide loader;
+	// folder switches show the thin top bar instead.
+	usePageLoading(isLoading && messages.length === 0);
 	const headerIcons = config.headerIcons ?? [];
 	const hasActiveFilters = !!query.trim();
 	const folderCount = config.folderId
@@ -348,6 +361,7 @@ export function MessageFolderPage({
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
+			<RouteProgress active={showingStaleList || (isLoading && !mailboxesLoading)} />
 			<div className={`flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 ${compact ? "px-4" : "px-6"}`}>
 				<div className="flex items-center gap-3 w-full">
 					<Tooltip label="Select all visible messages">
@@ -427,7 +441,11 @@ export function MessageFolderPage({
 				)}
 			</div>
 
-			<div className="min-h-0 flex-1 divide-y divide-neutral-100 overflow-y-auto overscroll-contain scrollbar-gutter-stable">
+			<div
+				className={`min-h-0 flex-1 divide-y divide-neutral-100 overflow-y-auto overscroll-contain scrollbar-gutter-stable transition-opacity ${
+					showingStaleList ? "pointer-events-none opacity-60" : ""
+				}`}
+			>
 				{messages.map((message) => (
 					<MessageListRow
 						key={message.id}

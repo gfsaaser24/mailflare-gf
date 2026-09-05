@@ -1,14 +1,46 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { clearMailboxClientState } from "@/components/mailbox-provider-utils";
 import { BrandingProvider } from "@/components/branding-provider";
 import { NewMessagePopup } from "@/components/new-message-popup";
 import { useMessagePolling } from "@/hooks/use-message-polling";
-import { clearMessageClientState } from "@/hooks/utils";
+import { applyMessageCountsDelta, invalidateMailQueries } from "@/hooks/utils";
+import type { MessageCountsDelta } from "@/hooks/types";
 import { clearMessageDetailCache } from "@/lib/messages/detail-cache";
 import { AUTH_SESSION_CHANGED_EVENT } from "@/lib/auth/client";
+
+/**
+ * The one bridge between the legacy `mailflare:*` window events (dispatched from
+ * plain modules that have no access to a query client) and React Query.
+ *
+ * Mounted exactly once, so an optimistic count delta is applied once no matter
+ * how many components read the counts.
+ */
+function MailQueryEvents() {
+	const queryClient = useQueryClient();
+
+	useEffect(() => {
+		function onMessagesChanged() {
+			invalidateMailQueries(queryClient);
+		}
+		function onCountsDelta(event: Event) {
+			applyMessageCountsDelta(queryClient, (event as CustomEvent<MessageCountsDelta>).detail);
+		}
+
+		window.addEventListener("mailflare:messages-changed", onMessagesChanged);
+		window.addEventListener("mailflare:message-counts-changed", onMessagesChanged);
+		window.addEventListener("mailflare:message-counts-delta", onCountsDelta);
+		return () => {
+			window.removeEventListener("mailflare:messages-changed", onMessagesChanged);
+			window.removeEventListener("mailflare:message-counts-changed", onMessagesChanged);
+			window.removeEventListener("mailflare:message-counts-delta", onCountsDelta);
+		};
+	}, [queryClient]);
+
+	return null;
+}
 
 export function Providers({ children }: { children: React.ReactNode }) {
 	const realtime = useMessagePolling();
@@ -31,7 +63,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
 		function resetUserScopedState() {
 			client.clear();
 			clearMailboxClientState();
-			clearMessageClientState();
 			clearMessageDetailCache();
 		}
 
@@ -41,6 +72,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
 	return (
 		<QueryClientProvider client={client}>
+			<MailQueryEvents />
 			<BrandingProvider>
 				{children}
 				{realtime.notification && (

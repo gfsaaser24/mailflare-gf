@@ -1,8 +1,14 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { authFetch } from "@/lib/auth/client";
 import type { MessageFilterOptions, MessageFolder } from "./types";
-import type { MessageCounts, MessageListResponse } from "./types";
+import type { MessageCounts, MessageCountsDelta, MessageListResponse } from "./types";
 
 export const MESSAGE_POLL_INTERVAL_MS = 15_000;
+/** A list stays fresh for one "glance"; a folder switch inside it costs no request. */
+export const MESSAGE_LIST_STALE_TIME_MS = 15_000;
+export const MESSAGE_COUNTS_STALE_TIME_MS = 30_000;
+/** Same page size the folder list renders with; prefetch has to match it exactly. */
+export const MESSAGE_LIST_PAGE_SIZE = 25;
 
 export function parseMessageSearchQuery(query: string): MessageFilterOptions {
 	let remaining = query;
@@ -72,85 +78,92 @@ export function getMessageQueryParams(
 	return params;
 }
 
-const messageCountsCache = new Map<string, MessageCounts>();
-const messageCountsRequests = new Map<string, Promise<MessageCounts | undefined>>();
-const messageListCache = new Map<string, MessageListResponse>();
-const messageListRequests = new Map<string, Promise<MessageListResponse>>();
-let messageCacheGeneration = 0;
-let messageCountsGeneration = 0;
-
-export function clearMessageCountsCache() {
-	messageCountsGeneration += 1;
-	messageCountsCache.clear();
-	messageCountsRequests.clear();
+/**
+ * React Query keys. Both are prefixed so `invalidateMailQueries` can drop every
+ * list or every count set with one call.
+ *
+ * The filter part is normalised: an empty search box and `read: "all"` do not
+ * change the request, so they must not change the key either (otherwise the
+ * sidebar prefetch would warm a key the page never reads).
+ */
+export function messageListQueryKey(
+	folder: MessageFolder,
+	mailboxId?: string | null,
+	filters?: MessageFilterOptions,
+	folderId?: string | null,
+) {
+	return [
+		"messages",
+		mailboxId ?? null,
+		folder,
+		folderId ?? null,
+		{
+			query: filters?.query?.trim() || null,
+			read: filters?.read && filters.read !== "all" ? filters.read : null,
+			title: filters?.title?.trim() || null,
+			limit: filters?.limit ?? null,
+			offset: filters?.offset ?? null,
+		},
+	] as const;
 }
 
-export function clearMessageListCache() {
-	messageListCache.clear();
+export function messageCountsQueryKey(mailboxId?: string | null) {
+	return ["message-counts", mailboxId ?? null] as const;
 }
 
-export function clearMessageClientState() {
-	messageCacheGeneration += 1;
-	messageCountsGeneration += 1;
-	messageCountsCache.clear();
-	messageCountsRequests.clear();
-	messageListCache.clear();
-	messageListRequests.clear();
+export async function fetchMessageCounts(mailboxId?: string | null): Promise<MessageCounts | undefined> {
+	const params = new URLSearchParams();
+	if (mailboxId) params.set("mailboxId", mailboxId);
+	const query = params.toString();
+	const res = await authFetch(`/api/messages/counts${query ? `?${query}` : ""}`);
+	const data = (await res.json()) as { counts?: MessageCounts };
+	return data.counts;
 }
 
-export async function fetchMessageCounts(mailboxId?: string | null, force = false): Promise<MessageCounts | undefined> {
-	const key = mailboxId ?? "all";
-	if (!force && messageCountsCache.has(key)) return messageCountsCache.get(key);
-	if (!force && messageCountsRequests.has(key)) return messageCountsRequests.get(key);
+export async function fetchMessageList(params: URLSearchParams): Promise<MessageListResponse> {
+	const res = await authFetch(`/api/messages?${params.toString()}`);
+	return (await res.json()) as MessageListResponse;
+}
 
-	const requestGeneration = messageCacheGeneration;
-	const countsGeneration = messageCountsGeneration;
-	const request = (async () => {
-		const params = new URLSearchParams();
-		if (mailboxId) params.set("mailboxId", mailboxId);
-		const query = params.toString();
-		const res = await authFetch(`/api/messages/counts${query ? `?${query}` : ""}`);
-		const data = (await res.json()) as { counts?: MessageCounts };
-		const counts = data.counts;
-		if (
-			counts &&
-			requestGeneration === messageCacheGeneration &&
-			countsGeneration === messageCountsGeneration
-		) {
-			messageCountsCache.set(key, counts);
-		}
-		return counts;
-	})().finally(() => {
-		if (messageCountsRequests.get(key) === request) {
-			messageCountsRequests.delete(key);
-		}
+/**
+ * Warms the exact key `useMessages` reads on the first page of a folder, so a
+ * hover over the sidebar makes the click itself free.
+ */
+export function prefetchFolder(
+	queryClient: QueryClient,
+	mailboxId: string | null | undefined,
+	folder: MessageFolder,
+	folderId?: string | null,
+) {
+	const filters: MessageFilterOptions = { limit: MESSAGE_LIST_PAGE_SIZE, offset: 0 };
+	return queryClient.prefetchQuery({
+		queryKey: messageListQueryKey(folder, mailboxId, filters, folderId),
+		queryFn: () => fetchMessageList(getMessageQueryParams(folder, mailboxId, filters, folderId)),
+		staleTime: MESSAGE_LIST_STALE_TIME_MS,
 	});
-
-	messageCountsRequests.set(key, request);
-	return request;
 }
 
-export async function fetchMessageList(params: URLSearchParams, force = false): Promise<MessageListResponse> {
-	const key = params.toString();
-	if (!force && messageListCache.has(key)) return messageListCache.get(key) ?? {};
-	if (messageListRequests.has(key)) return messageListRequests.get(key) ?? {};
+/** Single funnel for "the mailbox changed": every list and every count is refetched. */
+export function invalidateMailQueries(queryClient: QueryClient): void {
+	void queryClient.invalidateQueries({ queryKey: ["messages"] });
+	void queryClient.invalidateQueries({ queryKey: ["message-counts"] });
+}
 
-	const requestGeneration = messageCacheGeneration;
-	const request = authFetch(`/api/messages?${key}`)
-		.then((res) => res.json())
-		.then((data) => {
-			const response = data as MessageListResponse;
-			if (requestGeneration === messageCacheGeneration) {
-				messageListCache.set(key, response);
-			}
-			return response;
-		})
-		.finally(() => {
-			if (requestGeneration === messageCacheGeneration) {
-				messageListRequests.delete(key);
-			}
-		});
-
-	messageListRequests.set(key, request);
-	return request;
+/** Optimistic inbox-unread nudge, applied to every cached count set at once. */
+export function applyMessageCountsDelta(queryClient: QueryClient, delta: MessageCountsDelta): void {
+	const inboxUnreadDelta = delta?.inboxUnreadDelta;
+	if (!inboxUnreadDelta) return;
+	queryClient.setQueriesData<MessageCounts>({ queryKey: ["message-counts"] }, (current) => {
+		if (!current) return current;
+		return {
+			...current,
+			folders: {
+				...current.folders,
+				inbox: {
+					...current.folders.inbox,
+					unread: Math.max(0, current.folders.inbox.unread + inboxUnreadDelta),
+				},
+			},
+		};
+	});
 }
