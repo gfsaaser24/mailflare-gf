@@ -1,4 +1,4 @@
-import type { MessageAttachment } from "@/app/(dashboard)/inbox/[messageId]/types";
+import type { MessageAttachment } from "@/app/(dashboard)/(mail)/inbox/[messageId]/types";
 import type { LucideIcon } from "lucide-react";
 
 export interface MessageAttachmentCardProps {

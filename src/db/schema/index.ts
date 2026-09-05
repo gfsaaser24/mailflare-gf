@@ -359,6 +359,13 @@ export const messages = pgTable(
 		index("messages_conversation_idx").on(t.conversationId, t.createdAt),
 		index("messages_mailbox_idx").on(t.mailboxId),
 		index("messages_folder_idx").on(t.folderId),
+		// The folder list query shape: one mailbox, one status, newest first.
+		index("messages_mailbox_status_created_idx").on(t.mailboxId, t.status, t.createdAt),
+		// Inbox and every other unfiled view add `folder_id IS NULL`; the partial
+		// index keeps filed mail out of the heap read entirely.
+		index("messages_mailbox_status_unfiled_created_idx")
+			.on(t.mailboxId, t.status, t.createdAt)
+			.where(sql`${t.folderId} IS NULL`),
 		// Inbound idempotency: the edge worker may retry the same message.
 		uniqueIndex("messages_inbound_provider_id_idx")
 			.on(t.mailboxId, t.providerMessageId)

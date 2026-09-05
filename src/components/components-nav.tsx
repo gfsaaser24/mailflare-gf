@@ -1,36 +1,27 @@
 import Link from "next/link";
 import type { DragEvent, MouseEvent } from "react";
-import { useEffect, useState } from "react";
+import { useState, useTransition } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { cn } from "@/lib/utils";
 import { usePathname, useRouter } from "next/navigation";
 import { getMessageDragData } from "@/lib/messages/drag-utils";
 import { useSelectedMailbox } from "./mailbox-provider";
+import { RouteProgress } from "./route-progress";
 import { useSidebar } from "./sidebar-state";
 import { useCompose } from "./compose/compose-context";
-import {
-  preloadMailboxPage,
-  waitForNavigationProgress,
-} from "./components-nav-utils";
+import { preloadMailboxPage } from "./components-nav-utils";
 import type { NavLink } from "./components-nav-types";
 
 export function NavItem({ link }: { link: NavLink }) {
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { openComposer } = useCompose();
   const { selectedMailbox } = useSelectedMailbox();
   const { minimal } = useSidebar();
   const [dragOver, setDragOver] = useState(false);
-  const [navigationProgress, setNavigationProgress] = useState<number | null>(
-    null,
-  );
-
-  useEffect(() => {
-    if (navigationProgress === null) return;
-    setNavigationProgress(100);
-    const timer = window.setTimeout(() => setNavigationProgress(null), 220);
-    return () => window.clearTimeout(timer);
-  }, [pathname]);
+  const [navigating, startNavigation] = useTransition();
 
   if (!link.href) {
     return <span className="flex-1" />;
@@ -94,52 +85,44 @@ export function NavItem({ link }: { link: NavLink }) {
     );
   }
 
-  async function navigate(event: MouseEvent<HTMLAnchorElement>) {
+  /** Hover/focus warms both halves of the next screen: RSC payload and list data. */
+  function prefetch() {
+    if (!link.preloadMessages || active) return;
+    router.prefetch(link.href!);
+    preloadMailboxPage(queryClient, link.href!, selectedMailbox?.id);
+  }
+
+  /**
+   * Plain left clicks navigate inside a transition, which keeps the current
+   * folder on screen (and its scroll position) until the next one is ready.
+   * Modified clicks fall through to the `<Link>` so open-in-new-tab still works.
+   */
+  function navigate(event: MouseEvent<HTMLAnchorElement>) {
     if (
       !link.preloadMessages ||
       active ||
       event.metaKey ||
       event.ctrlKey ||
       event.shiftKey ||
-      event.altKey
+      event.altKey ||
+      event.button !== 0
     )
       return;
     event.preventDefault();
-    setNavigationProgress(12);
-    const timer = window.setInterval(() => {
-      setNavigationProgress((current) =>
-        current === null ? 12 : Math.min(90, current + 8),
-      );
-    }, 80);
-    try {
-      router.prefetch(link.href!);
-      await Promise.all([
-        preloadMailboxPage(link.href!, selectedMailbox?.id),
-        waitForNavigationProgress(),
-      ]);
-      setNavigationProgress(100);
-      await waitForNavigationProgress(160);
+    preloadMailboxPage(queryClient, link.href!, selectedMailbox?.id);
+    startNavigation(() => {
       router.push(link.href!);
-    } catch {
-      setNavigationProgress(null);
-    } finally {
-      window.clearInterval(timer);
-    }
+    });
   }
 
   return (
     <>
-      {navigationProgress !== null && (
-        <div className="fixed inset-x-0 top-0 z-[120] h-1 bg-blue-100">
-          <div
-            className="h-full bg-blue-600 transition-[width] duration-100 ease-out"
-            style={{ width: `${navigationProgress}%` }}
-          />
-        </div>
-      )}
+      <RouteProgress active={navigating} />
       <Link
         href={link.href}
         onClick={navigate}
+        onMouseEnter={prefetch}
+        onFocus={prefetch}
         title={minimal ? link.label : undefined}
         className={cn(!minimal && "-ml-3 pl-6", classes)}
         {...dropProps}

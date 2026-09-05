@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
-import type { MessageCounts, MessageCountsDelta } from "./types";
-import { clearMessageCountsCache, fetchMessageCounts } from "./utils";
+import { useQuery } from "@tanstack/react-query";
+import type { MessageCounts } from "./types";
+import {
+	fetchMessageCounts,
+	MESSAGE_COUNTS_STALE_TIME_MS,
+	MESSAGE_POLL_INTERVAL_MS,
+	messageCountsQueryKey,
+} from "./utils";
 
 const emptyCounts: MessageCounts = {
 	folders: {
@@ -18,60 +23,20 @@ const emptyCounts: MessageCounts = {
 };
 
 export function useMessageCounts(mailboxId?: string | null, enabled = true) {
-	const [counts, setCounts] = useState<MessageCounts>(emptyCounts);
-	const [isLoading, setIsLoading] = useState(enabled);
+	const query = useQuery({
+		queryKey: messageCountsQueryKey(mailboxId),
+		queryFn: async () => (await fetchMessageCounts(mailboxId)) ?? emptyCounts,
+		enabled,
+		// Counts for the previous mailbox stay on the sidebar while the next set loads.
+		placeholderData: (previous) => previous,
+		staleTime: MESSAGE_COUNTS_STALE_TIME_MS,
+		refetchInterval: MESSAGE_POLL_INTERVAL_MS,
+	});
 
-	useEffect(() => {
-		if (!enabled) {
-			setIsLoading(false);
-			return;
-		}
-
-		let cancelled = false;
-
-		async function loadCounts(force = false) {
-			setIsLoading(true);
-			try {
-				const nextCounts = await fetchMessageCounts(mailboxId, force);
-				if (!cancelled) setCounts(nextCounts ?? emptyCounts);
-			} finally {
-				if (!cancelled) setIsLoading(false);
-			}
-		}
-
-		void loadCounts();
-		function onMessagesChanged() {
-			clearMessageCountsCache();
-			void loadCounts(true);
-		}
-		function onMessageCountsDelta(event: Event) {
-			const detail = (event as CustomEvent<MessageCountsDelta>).detail;
-			const inboxUnreadDelta = detail?.inboxUnreadDelta;
-			if (!inboxUnreadDelta) return;
-			setCounts((current) => ({
-				...current,
-				folders: {
-					...current.folders,
-					inbox: {
-						...current.folders.inbox,
-						unread: Math.max(0, current.folders.inbox.unread + inboxUnreadDelta),
-					},
-				},
-			}));
-		}
-		window.addEventListener("mailflare:messages-changed", onMessagesChanged);
-		window.addEventListener("mailflare:message-counts-changed", onMessagesChanged);
-		window.addEventListener("mailflare:message-counts-delta", onMessageCountsDelta);
-		const refreshInterval = window.setInterval(() => void loadCounts(true), 15_000);
-
-		return () => {
-			cancelled = true;
-			window.removeEventListener("mailflare:messages-changed", onMessagesChanged);
-			window.removeEventListener("mailflare:message-counts-changed", onMessagesChanged);
-			window.removeEventListener("mailflare:message-counts-delta", onMessageCountsDelta);
-			window.clearInterval(refreshInterval);
-		};
-	}, [enabled, mailboxId]);
-
-	return { counts, isLoading };
+	return {
+		counts: query.data ?? emptyCounts,
+		isLoading: enabled && query.isPending && query.data === undefined,
+		isFetching: query.isFetching,
+		isPlaceholderData: query.isPlaceholderData,
+	};
 }

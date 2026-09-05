@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useDeferredValue, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { MailSearchContextValue } from "./types";
 
@@ -14,10 +14,15 @@ export function useMailSearch() {
 
 export function MailSearchProvider({ children }: { children: ReactNode }) {
 	const [query, setQuery] = useState("");
-
-	return (
-		<MailSearchContext.Provider value={{ query, setQuery }}>
-			{children}
-		</MailSearchContext.Provider>
+	/**
+	 * The input renders from `query` (never lags a keystroke); the message list
+	 * reads `deferredQuery`, so a slow list render cannot stall typing.
+	 */
+	const deferredQuery = useDeferredValue(query);
+	const value = useMemo<MailSearchContextValue>(
+		() => ({ query, deferredQuery, setQuery }),
+		[query, deferredQuery],
 	);
+
+	return <MailSearchContext.Provider value={value}>{children}</MailSearchContext.Provider>;
 }
