@@ -806,12 +806,26 @@ components:
         subject: { type: [string, "null"] }
         status: { type: string, const: draft }
 
+    RecipientList:
+      description: >
+        One address, several addresses separated by `,` or `;`, or an array of
+        addresses. A display name is allowed (`"Chen, Maya" <maya@example.com>`);
+        a comma inside quotes or `<...>` is not a separator. `to` + `cc` + `bcc`
+        may not exceed 50 addresses in total.
+      oneOf:
+        - { type: string, maxLength: 8000 }
+        - type: array
+          maxItems: 50
+          items: { type: string, maxLength: 500 }
+
     SendRequest:
       type: object
       required: [from, to, subject, mailboxId]
       properties:
         from: { type: string, minLength: 3, maxLength: 500 }
-        to: { type: string, minLength: 3, maxLength: 500 }
+        to: { $ref: "#/components/schemas/RecipientList" }
+        cc: { $ref: "#/components/schemas/RecipientList" }
+        bcc: { $ref: "#/components/schemas/RecipientList" }
         subject: { type: string, minLength: 1, maxLength: 500 }
         mailboxId: { type: string, minLength: 1, maxLength: 200 }
         text: { type: string }

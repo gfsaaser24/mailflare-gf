@@ -164,6 +164,13 @@ export default function MessageDetailPage() {
                 toName
               )}
             </p>
+            {message.ccAddr && (
+              <p className="text-xs text-neutral-500">cc {message.ccAddr}</p>
+            )}
+            {/* A Bcc is stripped before delivery, so it is only ever ours to show. */}
+            {message.direction === "outbound" && message.bccAddr && (
+              <p className="text-xs text-neutral-500">bcc {message.bccAddr}</p>
+            )}
           </div>
           <p className="text-xs text-neutral-400">
             {dayjs(message.createdAt).format("MMM DD, YYYY, hh:mmA")}

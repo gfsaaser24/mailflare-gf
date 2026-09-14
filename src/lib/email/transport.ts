@@ -8,7 +8,13 @@ export type OutboundAttachment = {
 
 export type OutboundMessage = {
 	from: string;
-	to: string;
+	/** One address, or the full envelope `To` list. */
+	to: string | string[];
+	/** Envelope recipients that also appear in the `Cc` header. */
+	cc?: string[];
+	/** Envelope recipients that appear in no header. */
+	bcc?: string[];
+	replyTo?: string;
 	subject: string;
 	headers?: Record<string, string>;
 	html?: string;
@@ -59,7 +65,8 @@ export class UnconfiguredEmailSender implements EmailSender {
 /** Used when no transport is configured (dev): logs and pretends to send. */
 export class NoopEmailSender implements EmailSender {
 	async send(message: OutboundMessage): Promise<{ messageId: string }> {
-		console.warn("[email] no transport configured; dropping message to " + message.to + " (" + message.subject + ")");
+		const to = Array.isArray(message.to) ? message.to.join(", ") : message.to;
+		console.warn("[email] no transport configured; dropping message to " + to + " (" + message.subject + ")");
 		return { messageId: "noop-" + Date.now() };
 	}
 }

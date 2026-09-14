@@ -11,12 +11,18 @@ import { createAuditLog } from "@/lib/mailboxes/audit";
 import { storeMessageAttachments, validateAttachments } from "@/lib/email/attachments";
 import { getUserOrganizationId } from "@/lib/organizations/service";
 import { getOrganizationQuota, reserveQuota } from "@/lib/quotas/service";
+import { dedupeRecipients, joinRecipients, normalizeRecipients } from "@/lib/email/recipients";
 import type { AttachmentContent } from "@/lib/email/attachment-types";
 
 export type SendEmailInput = {
 	userId: string;
 	from: string;
-	to: string;
+	/** One address, or several. A comma/semicolon separated string is split. */
+	to: string | string[];
+	/** Real envelope recipients that also appear in the `Cc` header. */
+	cc?: string[];
+	/** Real envelope recipients that appear in no header. */
+	bcc?: string[];
 	subject: string;
 	html?: string;
 	text?: string;
@@ -33,14 +39,22 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 	// Quotas (T5.1): the per-attachment ceiling is known before anything is written;
 	// the daily send counter is booked right before the transport call below.
 	const organizationId = await getUserOrganizationId(db, input.userId);
+	const toAddresses = normalizeRecipients(input.to);
+	if (toAddresses.length === 0) throw new Error("At least one recipient is required");
+	const ccAddresses = normalizeRecipients(input.cc);
+	const bccAddresses = normalizeRecipients(input.bcc);
 	const sender = await getAuthorizedSenderAddress(env, { ...input, organizationId });
 	const quota = await getOrganizationQuota(db, organizationId);
 	validateAttachments(attachments, quota);
-	await upsertContactFromAddress(env, {
-		userId: input.userId,
-		address: input.to,
-		source: "outbound",
-	});
+	// Every envelope recipient becomes a contact, Bcc included: the sender chose
+	// to write to them, and the row is only ever visible to the sender's own org.
+	for (const address of dedupeRecipients([...toAddresses, ...ccAddresses, ...bccAddresses])) {
+		await upsertContactFromAddress(env, {
+			userId: input.userId,
+			address,
+			source: "outbound",
+		});
+	}
 	const messageId = newId("msg");
 	const snippet = buildSnippet(input.text ?? null, input.html ?? null);
 	const sentAt = new Date();
@@ -49,7 +63,8 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		mailboxId: sender.mailboxId,
 		subject: input.subject,
 		fromAddr: sender.fromAddr,
-		toAddr: input.to,
+		// Threading keys off the first recipient; Cc and Bcc never start a thread.
+		toAddr: toAddresses[0],
 		replyToMessageId: input.replyToMessageId ?? null,
 		sentAt,
 	});
@@ -67,7 +82,9 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		mailboxId: sender.mailboxId,
 		direction: "outbound",
 		fromAddr: sender.fromAddr,
-		toAddr: input.to,
+		toAddr: toAddresses.join(", "),
+		ccAddr: joinRecipients(ccAddresses),
+		bccAddr: joinRecipients(bccAddresses),
 		subject: input.subject,
 		snippet,
 		textBody: input.text ?? null,
@@ -106,7 +123,11 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		await reserveQuota(db, organizationId, { sendsToday: 1 });
 		const response = await env.EMAIL.send({
 			from: sender.fromAddr,
-			to: input.to,
+			// One recipient stays a plain string, which is exactly what the transport
+			// and the Cloudflare binding have always been handed.
+			to: toAddresses.length === 1 ? toAddresses[0] : toAddresses,
+			cc: ccAddresses.length ? ccAddresses : undefined,
+			bcc: bccAddresses.length ? bccAddresses : undefined,
 			subject: input.subject,
 			headers: Object.keys(headers).length ? headers : undefined,
 			html: input.html,
@@ -138,14 +159,21 @@ export async function sendEmail(env: CloudflareEnv, input: SendEmailInput): Prom
 		await dispatchWebhooks(env, input.userId, "message.outbound", {
 			messageId,
 			providerMessageId: response.messageId,
-			to: input.to,
+			to: toAddresses.join(", "),
+			cc: joinRecipients(ccAddresses),
+			bcc: joinRecipients(bccAddresses),
 		});
 		await createAuditLog(env, {
 			actorUserId: input.userId,
 			mailboxId: sender.mailboxId,
 			messageId,
 			action: "email.send",
-			metadata: { to: input.to, subject: input.subject },
+			metadata: {
+				to: toAddresses.join(", "),
+				ccCount: ccAddresses.length,
+				bccCount: bccAddresses.length,
+				subject: input.subject,
+			},
 		});
 
 		return { messageId };

@@ -163,6 +163,8 @@ export async function processInboundMessage(
 			providerMessageId: parsed.messageId,
 			fromAddr,
 			toAddr,
+			// Bcc is stripped by the sending server, so inbound mail never has one.
+			ccAddr: parsed.ccAddr,
 			subject: parsed.subject,
 			snippet,
 			textBody: parsed.text,

@@ -79,6 +79,8 @@ Send email through `POST /api/v1/send`. Attachments are optional and use Base64-
 {
   "from": "support@example.com",
   "to": "user@example.net",
+  "cc": "manager@example.net, audit@example.net",
+  "bcc": ["archive@example.com"],
   "subject": "Report",
   "text": "Attached.",
   "attachments": [
@@ -91,7 +93,21 @@ Send email through `POST /api/v1/send`. Attachments are optional and use Base64-
 }
 ```
 
-The dashboard composer accepts up to 10 attachments, with a 10 MB limit per file and a 20 MB combined limit. Attachment metadata is stored in D1 and file content is stored in R2. Downloads require access to the mailbox containing the message.
+### Recipients
+
+`to`, `cc` and `bcc` each take either one string or an array of strings. A string may hold several addresses separated by `,` or `;`. A display name is allowed (`"Chen, Maya" <maya@example.com>`); a comma inside quotes or inside `<...>` is not a separator.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `to` | yes | At least one address |
+| `cc` | no | Real envelope recipients; they also appear in the `Cc` header |
+| `bcc` | no | Real envelope recipients; they appear in no header |
+
+`to` + `cc` + `bcc` may not exceed 50 addresses in total — the limit of Cloudflare's `send_email` binding. Anything above that, or an entry that is not an address, is a `400`.
+
+The stored message keeps the lists comma-joined in `to_addr`, `cc_addr` and `bcc_addr`. Threading uses the first `to` address. Every `to`, `cc` and `bcc` address becomes a contact.
+
+The dashboard composer has a **Cc / Bcc** toggle beside the To field, and accepts up to 10 attachments, with a 10 MB limit per file and a 20 MB combined limit. Attachment metadata is stored in D1 and file content is stored in R2. Downloads require access to the mailbox containing the message.
 
 ## API keys
 
@@ -205,7 +221,7 @@ again.
 | Event | Fires when | `data` |
 |---|---|---|
 | `message.inbound` | A message is stored in a mailbox | `messageId`, `mailboxId`, `from`, `to`, `subject` |
-| `message.outbound` | A message is sent | `messageId`, `mailboxId`, `to`, `subject` |
+| `message.outbound` | A message is sent | `messageId`, `providerMessageId`, `to`, `cc`, `bcc` (`cc`/`bcc` are null when empty) |
 | `message.failed` | A send fails | `messageId`, `error` |
 | `conversation.assigned` | A conversation is assigned or unassigned | `conversationId`, `assignedUserId`, `subject`, `status` |
 | `conversation.note` | An internal note is added | `conversationId`, `noteId`, `body`, `authorId` |

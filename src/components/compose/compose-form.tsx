@@ -28,6 +28,11 @@ export function ComposeForm({
 	const { selectedMailbox, setSelectedMailbox, mailboxes } = useSelectedMailbox();
 	const [draftId, setDraftId] = useState<string | null>(null);
 	const [to, setTo] = useState("");
+	const [cc, setCc] = useState("");
+	const [bcc, setBcc] = useState("");
+	// Cc and Bcc stay hidden until asked for. Drafts do not carry them, so a
+	// reloaded draft always starts collapsed.
+	const [showCopyFields, setShowCopyFields] = useState(false);
 	const [subject, setSubject] = useState("");
 	const [text, setText] = useState("");
 	const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
@@ -166,6 +171,8 @@ export function ComposeForm({
 				attachments,
 				from: fromAddr,
 				to,
+				cc,
+				bcc,
 				subject,
 				text,
 				mailboxId: selectedMailbox?.id,
@@ -186,6 +193,9 @@ export function ComposeForm({
 		}
 		setDraftId(null);
 		setTo("");
+		setCc("");
+		setBcc("");
+		setShowCopyFields(false);
 		setSubject("");
 		setText(applyMailboxSignature("", "", selectedMailbox?.signature));
 		setAttachments([]);
@@ -274,7 +284,7 @@ export function ComposeForm({
 						))}
 					</Select>
 				</div>
-				<div className="border-b border-neutral-100 px-4 py-1">
+				<div className="flex items-center gap-2 border-b border-neutral-100 px-4 py-1">
 					<Label htmlFor={`${mode}-to`} className="sr-only">To</Label>
 					<Input
 						id={`${mode}-to`}
@@ -284,9 +294,46 @@ export function ComposeForm({
 						placeholder='Recipients, or "Maya Chen" <maya@example.com>'
 						required
 						disabled={loadingDraft}
-						className="h-8 border-0 px-0 py-1 shadow-none focus-visible:ring-0"
+						className="h-8 flex-1 border-0 px-0 py-1 shadow-none focus-visible:ring-0"
 					/>
+					<button
+						type="button"
+						onClick={() => setShowCopyFields((current) => !current)}
+						aria-expanded={showCopyFields}
+						aria-controls={`${mode}-copy-fields`}
+						className="shrink-0 rounded px-1 text-xs font-medium text-neutral-500 hover:text-neutral-900"
+					>
+						Cc / Bcc
+					</button>
 				</div>
+				{showCopyFields && (
+					<div id={`${mode}-copy-fields`}>
+						<div className="border-b border-neutral-100 px-4 py-1">
+							<Label htmlFor={`${mode}-cc`} className="sr-only">Cc</Label>
+							<Input
+								id={`${mode}-cc`}
+								value={cc}
+								onChange={(event) => setCc(event.target.value)}
+								type="text"
+								placeholder="Cc"
+								disabled={loadingDraft}
+								className="h-8 border-0 px-0 py-1 shadow-none focus-visible:ring-0"
+							/>
+						</div>
+						<div className="border-b border-neutral-100 px-4 py-1">
+							<Label htmlFor={`${mode}-bcc`} className="sr-only">Bcc</Label>
+							<Input
+								id={`${mode}-bcc`}
+								value={bcc}
+								onChange={(event) => setBcc(event.target.value)}
+								type="text"
+								placeholder="Bcc"
+								disabled={loadingDraft}
+								className="h-8 border-0 px-0 py-1 shadow-none focus-visible:ring-0"
+							/>
+						</div>
+					</div>
+				)}
 				<div className="border-b border-neutral-100 px-4 py-1">
 					<Label htmlFor={`${mode}-subject`} className="sr-only">Subject</Label>
 					<Input

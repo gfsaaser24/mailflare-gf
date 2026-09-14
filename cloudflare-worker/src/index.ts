@@ -32,13 +32,31 @@ type SendRequestAttachment = {
 
 type SendRequestBody = {
 	from: string;
-	to: string;
+	/** One address, or the whole `To` list. */
+	to: string | string[];
+	/** Envelope recipients that also go in the `Cc` header. */
+	cc?: string | string[];
+	/** Envelope recipients that go in no header. */
+	bcc?: string | string[];
+	replyTo?: string;
 	subject: string;
 	headers?: Record<string, string>;
 	html?: string;
 	text?: string;
 	attachments?: SendRequestAttachment[];
 };
+
+/** Drops empties so a key is only sent when it carries a real recipient. */
+function recipientList(value: string | string[] | undefined): string[] {
+	if (value === undefined) return [];
+	const items = Array.isArray(value) ? value : [value];
+	return items.filter((item) => typeof item === "string" && item.trim().length > 0);
+}
+
+/** Recipients as one string, for log lines that must not print `[object Object]`. */
+function describeRecipients(value: string | string[] | undefined): string {
+	return recipientList(value).join(", ") || "(no recipient)";
+}
 
 export default {
 	async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
@@ -110,13 +128,20 @@ export default {
 			} catch {
 				return json({ error: "Invalid JSON body" }, 400);
 			}
-			if (!body?.from || !body?.to) {
+			const to = recipientList(body?.to);
+			if (!body?.from || to.length === 0) {
 				return json({ error: "from and to are required" }, 400);
 			}
+			const cc = recipientList(body.cc);
+			const bcc = recipientList(body.bcc);
 			try {
 				const result = await env.EMAIL.send({
 					from: body.from,
-					to: body.to,
+					// One recipient is still sent as a plain string, unchanged.
+					to: to.length === 1 ? to[0] : to,
+					...(cc.length ? { cc } : {}),
+					...(bcc.length ? { bcc } : {}),
+					...(body.replyTo ? { replyTo: body.replyTo } : {}),
 					subject: body.subject ?? "",
 					headers: body.headers,
 					html: body.html,
@@ -140,7 +165,7 @@ export default {
 				});
 				return json({ messageId: result.messageId }, 200);
 			} catch (error) {
-				console.error("Outbound send failed for " + body.to, error);
+				console.error("Outbound send failed for " + describeRecipients(body.to), error);
 				return json({ error: error instanceof Error ? error.message : "Send failed" }, 502);
 			}
 		}
