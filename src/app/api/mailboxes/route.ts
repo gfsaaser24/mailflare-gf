@@ -44,7 +44,7 @@ export const GET = withOrg(async (ctx, request) => {
 		}))),
 		canCreateShared: ctx.user.role === "admin",
 	});
-});
+}, { allowApiKey: true, requiredScope: "mailboxes:manage" });
 
 export const POST = withOrg(async (ctx, request) => {
 	const { db, env, user, orgId, scoped, insertValues } = ctx;
@@ -156,4 +156,4 @@ export const POST = withOrg(async (ctx, request) => {
 		type: mailboxType,
 		agentMail: parsed.data.agentMail ?? false,
 	});
-});
+}, { allowApiKey: true, requiredScope: "mailboxes:manage" });

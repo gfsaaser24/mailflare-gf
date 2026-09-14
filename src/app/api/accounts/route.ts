@@ -26,7 +26,7 @@ export const GET = withOrg(async (ctx) => {
 	return NextResponse.json({
 		accounts: rows.map((row) => accountListItemFromUser(row)),
 	});
-});
+}, { allowApiKey: true, requiredScope: "mailboxes:manage" });
 
 export const POST = withOrg(async (ctx, request) => {
 	const forbidden = requireTeamAdmin(ctx);

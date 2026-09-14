@@ -18,7 +18,7 @@ export const GET = withOrg(async ({ env, user, orgId }) => {
 	const domains = await listUserDomains(env, orgId, domainOwnerId);
 
 	return NextResponse.json({ domains });
-});
+}, { allowApiKey: true, requiredScope: "domains:manage" });
 
 export const POST = withOrg(async ({ env, user, orgId }, request) => {
 	const parsed = addDomainSchema.safeParse(await request.json());
@@ -41,4 +41,4 @@ export const POST = withOrg(async ({ env, user, orgId }, request) => {
 		}
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
-});
+}, { allowApiKey: true, requiredScope: "domains:manage" });

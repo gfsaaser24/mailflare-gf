@@ -117,8 +117,24 @@ A key must be created with at least one scope, and only these scopes exist. Anyt
 | `conversations:write` | Reply, assign, and add notes to conversations |
 | `contacts:read` | Read contacts |
 | `send` | Send email |
+| `domains:manage` | List, add and check domains (DNS, routing, sending) |
+| `mailboxes:manage` | List and create mailboxes, list team accounts |
 
 Each `/api/v1` route names the one scope it needs: `GET /api/v1/messages` needs `messages:read`, `POST /api/v1/send` needs `send`. A key without it gets `403 {"error":"Insufficient scope"}`.
+
+The two `*:manage` scopes are the exception to "keys are for `/api/v1` only". They open the
+dashboard provisioning routes to a key so an operator script can set up a domain and its
+mailboxes without a browser (Turnstile makes a scripted login impossible in production):
+
+| Route | Scope |
+| --- | --- |
+| `GET /api/domains`, `POST /api/domains` | `domains:manage` |
+| `GET /api/domains/[id]/dns`, `POST /api/domains/[id]/reconcile` | `domains:manage` |
+| `GET /api/mailboxes`, `POST /api/mailboxes` | `mailboxes:manage` |
+| `GET /api/accounts` | `mailboxes:manage` |
+
+The handler rules are unchanged: a shared mailbox or a mailbox for another account still
+needs the key's owner to be an admin.
 
 A key can only ever act inside the organisation it was issued in, whatever its owner's other memberships are.
 

@@ -16,4 +16,4 @@ export const GET = withOrg<Params>(async ({ env, user, orgId }, _request, { para
 		const message = err instanceof Error ? err.message : "Failed to fetch DNS";
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
-});
+}, { allowApiKey: true, requiredScope: "domains:manage" });

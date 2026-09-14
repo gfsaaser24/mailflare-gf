@@ -67,6 +67,11 @@ surface, don't spread `process.env` reads around. `BUCKET` is an R2Bucket-like a
   such an owner, `withOrg()` and `/api/auth/me` exempt them from the organisation's
   `require_two_factor`, and setting the flag while the owner has TOTP is refused with 400
   `owner_has_two_factor`. Rules live in `src/lib/mailboxes/agent-mail.ts`.
+- API keys (`Authorization: Bearer ep_...`) are for `/api/v1/**`, with two exceptions: the
+  `domains:manage` and `mailboxes:manage` scopes (`src/lib/api/scopes.ts`) open
+  `GET|POST /api/domains`, `/api/domains/[id]/{dns,reconcile}`, `GET|POST /api/mailboxes`
+  and `GET /api/accounts` to a key, so the `mailflare-provision` skill can set up a domain
+  and its mailboxes without a browser. Nothing else on the dashboard surface takes a key.
 - Turnstile fails closed in production: no `TURNSTILE_SECRET_KEY` means every protected
   request is refused (and one `console.error` at boot). In development the check is
   skipped. `getEnv()` also warns in production when `TURNSTILE_SECRET_KEY`,

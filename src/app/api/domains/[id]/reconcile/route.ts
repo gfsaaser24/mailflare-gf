@@ -19,4 +19,4 @@ export const POST = withOrg<Params>(async ({ env, user, orgId }, _request, { par
 		const message = err instanceof Error ? err.message : "Failed to reconcile domain";
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
-});
+}, { allowApiKey: true, requiredScope: "domains:manage" });

@@ -14,7 +14,9 @@ export type ScopeName =
 	| "conversations:read"
 	| "conversations:write"
 	| "contacts:read"
-	| "send";
+	| "send"
+	| "domains:manage"
+	| "mailboxes:manage";
 
 export type ScopeDefinition = {
 	name: ScopeName;
@@ -28,6 +30,11 @@ export const SCOPES: readonly ScopeDefinition[] = [
 	{ name: "conversations:write", description: "Reply, assign, and add notes to conversations" },
 	{ name: "contacts:read", description: "Read contacts" },
 	{ name: "send", description: "Send email" },
+	// Provisioning scopes: the only non-`/api/v1` routes that accept a key. They
+	// exist so an operator's script can add a domain and its mailboxes without a
+	// browser session (Turnstile makes a scripted login impossible in production).
+	{ name: "domains:manage", description: "List, add and check domains (DNS, routing, sending)" },
+	{ name: "mailboxes:manage", description: "List and create mailboxes, list team accounts" },
 ] as const;
 
 export const SCOPE_NAMES: readonly ScopeName[] = SCOPES.map((scope) => scope.name);
