@@ -62,7 +62,7 @@ let readOnlyKey = "";
 let otherOrgKey = "";
 
 /** Every message the stubbed transport was asked to send. */
-const sent: Array<{ to: string; subject: string; headers?: Record<string, string> }> = [];
+const sent: Array<{ to: string | string[]; subject: string; headers?: Record<string, string> }> = [];
 
 function request(url: string, init?: RequestInit): Request {
 	return new Request(`http://localhost${url}`, init);

@@ -58,6 +58,21 @@ export function formatPostalAddressList(addresses: Address[] | undefined, fallba
 	return formatEmailAddress(mailbox.address, mailbox.name);
 }
 
+/**
+ * Every address in the list, comma-joined — the stored `cc_addr` shape.
+ *
+ * Unlike `formatPostalAddressList`, which keeps only the first address because
+ * `to_addr` is one delivered recipient, this keeps them all.
+ */
+export function formatPostalAddressListAll(addresses: Address[] | undefined, fallback: string | null): string | null {
+	const formatted = (addresses ?? [])
+		.map(getFirstPostalMailbox)
+		.filter((item): item is Mailbox => !!item?.address)
+		.map((mailbox) => formatEmailAddress(mailbox.address, mailbox.name));
+
+	return formatted.length ? formatted.join(", ") : fallback;
+}
+
 function getFirstPostalMailbox(address: Address | undefined): Mailbox | null {
 	if (!address) return null;
 	if ("address" in address && address.address) return address;

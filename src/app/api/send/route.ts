@@ -22,8 +22,10 @@ export async function POST(request: Request) {
 		const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
 		return NextResponse.json({ error: "Invalid send request" }, { status });
 	}
+	// `attachments` is already split off; the schema now ends in a `.refine`
+	// (the combined 50-recipient cap), so `.omit()` is no longer available.
 	const { attachments, ...fields } = input;
-	const parsed = sendEmailSchema.omit({ attachments: true }).safeParse(fields);
+	const parsed = sendEmailSchema.safeParse(fields);
 	if (!parsed.success) {
 		return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 	}

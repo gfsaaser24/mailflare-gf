@@ -7,5 +7,8 @@ export interface SendRequestPayload {
 	mailboxId?: string;
 	subject: string;
 	text?: string;
-	to: string;
+	/** One address, or a comma/semicolon separated list; `sendEmailSchema` splits it. */
+	to: string | string[];
+	cc?: string | string[];
+	bcc?: string | string[];
 }

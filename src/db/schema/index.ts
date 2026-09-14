@@ -323,6 +323,10 @@ export const messages = pgTable(
 		folderId: text("folder_id").references(() => folders.id, { onDelete: "set null" }),
 		fromAddr: text("from_addr").notNull(),
 		toAddr: text("to_addr").notNull(),
+		// Comma-joined recipient lists, null when the message had none. `bcc_addr`
+		// is only ever set on outbound mail: a Bcc is stripped before delivery.
+		ccAddr: text("cc_addr"),
+		bccAddr: text("bcc_addr"),
 		subject: text("subject"),
 		snippet: text("snippet"),
 		textBody: text("text_body"),

@@ -13,6 +13,10 @@ export type Message = {
 	providerMessageId: string | null;
 	fromAddr: string;
 	toAddr: string;
+	/** Comma-joined `Cc` list, null when the message had none. */
+	ccAddr?: string | null;
+	/** Comma-joined `Bcc` list. Outbound only: a Bcc is stripped before delivery. */
+	bccAddr?: string | null;
 	fromContactName?: string | null;
 	toContactName?: string | null;
 	subject: string | null;

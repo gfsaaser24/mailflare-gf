@@ -1,25 +1,50 @@
 import { z } from "zod";
 import { WEBHOOK_EVENTS } from "@/lib/webhooks/events";
 import { DEFAULT_FOLDER_COLOR, FOLDER_COLOR_VALUES } from "@/lib/folders/colors";
+import { MAX_RECIPIENTS, isEmailLikeAddress, normalizeRecipients } from "@/lib/email/recipients";
 
-export const sendEmailSchema = z.object({
-	from: z.string().min(3).max(500),
-	to: z.string().min(3).max(500),
-	subject: z.string().min(1).max(500),
-	html: z.string().max(2 * 1024 * 1024).optional(),
-	text: z.string().max(2 * 1024 * 1024).optional(),
-	mailboxId: z.string().min(1).max(200),
-	attachments: z
-		.array(
-			z.object({
-					filename: z.string().min(1).max(255),
-					type: z.string().min(1).max(255).default("application/octet-stream"),
-					contentBase64: z.string().min(1).max(14 * 1024 * 1024),
-			}),
-		)
-		.max(10)
-		.optional(),
-});
+/**
+ * One recipient field on the wire: an array of addresses, or one
+ * comma/semicolon separated string. Either way it parses to `string[]`.
+ */
+const recipientField = z
+	.union([z.string().max(8000), z.array(z.string().max(500)).max(MAX_RECIPIENTS)])
+	.transform((value) => normalizeRecipients(value));
+
+const recipientAddress = z
+	.string()
+	.max(500)
+	.refine(isEmailLikeAddress, { message: "Not a valid email address" });
+
+export const sendEmailSchema = z
+	.object({
+		from: z.string().min(3).max(500),
+		to: recipientField.pipe(
+			z.array(recipientAddress).min(1, { message: "At least one recipient is required" }).max(MAX_RECIPIENTS),
+		),
+		cc: recipientField.pipe(z.array(recipientAddress).max(MAX_RECIPIENTS)).optional(),
+		bcc: recipientField.pipe(z.array(recipientAddress).max(MAX_RECIPIENTS)).optional(),
+		subject: z.string().min(1).max(500),
+		html: z.string().max(2 * 1024 * 1024).optional(),
+		text: z.string().max(2 * 1024 * 1024).optional(),
+		mailboxId: z.string().min(1).max(200),
+		attachments: z
+			.array(
+				z.object({
+						filename: z.string().min(1).max(255),
+						type: z.string().min(1).max(255).default("application/octet-stream"),
+						contentBase64: z.string().min(1).max(14 * 1024 * 1024),
+				}),
+			)
+			.max(10)
+			.optional(),
+	})
+	// Cloudflare's `send_email` binding caps the envelope at 50 recipients in
+	// total, not per field.
+	.refine(
+		(value) => value.to.length + (value.cc?.length ?? 0) + (value.bcc?.length ?? 0) <= MAX_RECIPIENTS,
+		{ message: `A message can have at most ${MAX_RECIPIENTS} recipients in total`, path: ["to"] },
+	);
 
 export const registerSchema = z.object({
 	email: z.string().email(),

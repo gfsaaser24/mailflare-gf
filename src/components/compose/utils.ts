@@ -14,6 +14,8 @@ export async function fetchDraft(draftId: string): Promise<ComposeDraft> {
 
 export function buildSendFormData(input: {
 	attachments: ComposeAttachment[];
+	bcc?: string;
+	cc?: string;
 	from: string;
 	mailboxId?: string;
 	subject: string;
@@ -23,6 +25,10 @@ export function buildSendFormData(input: {
 	const form = new FormData();
 	form.set("from", input.from);
 	form.set("to", input.to);
+	// Empty fields are left out entirely: the schema treats a present-but-blank
+	// value as "no recipients", which is the same thing but noisier.
+	if (input.cc?.trim()) form.set("cc", input.cc.trim());
+	if (input.bcc?.trim()) form.set("bcc", input.bcc.trim());
 	form.set("subject", input.subject);
 	form.set("text", input.text);
 	if (input.mailboxId) form.set("mailboxId", input.mailboxId);
