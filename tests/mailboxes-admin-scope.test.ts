@@ -1,10 +1,10 @@
 /**
  * `/api/mailboxes` admin organisation scope.
  *
- * The default listing is deliberately narrow — "inboxes I may open" — while the
- * uniqueness rule on create is org-wide, so a mailbox owned by somebody else can
- * block an address the admin cannot see anywhere. `?scope=organization` is the
- * admin-only window onto those rows; it must never widen the default scope.
+ * The default listing is "inboxes I may open". For an admin that is every mailbox of
+ * the organisation (`listAccessibleMailboxes`); for anyone else it is what they own
+ * or were delegated. `?scope=organization` is the admin-only management view that
+ * also names each owner and includes disabled mailboxes.
  */
 import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -159,20 +159,27 @@ describe.skipIf(!hasTestDatabase())("mailboxes: admin organisation scope", () =>
 		await seed();
 	});
 
-	it("hides another account's personal mailbox from the default scope", async () => {
+	it("lists every mailbox of the organisation for an admin, only their own for a user", async () => {
 		const { GET } = await import("@/app/api/mailboxes/route");
 
 		await signIn(ADMIN_A);
 		const response = await GET(get("/api/mailboxes"), routeCtx());
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { mailboxes: MailboxRow[]; canCreateShared: boolean };
-		expect(body.mailboxes.map((row) => row.id)).toEqual([MBX_ADMIN_A]);
+		expect(body.mailboxes.map((row) => row.id).sort()).toEqual([MBX_ADMIN_A, MBX_USER_B].sort());
 		expect(body.canCreateShared).toBe(true);
 
 		// Same for the explicit default.
 		const explicit = await GET(get("/api/mailboxes?scope=accessible"), routeCtx());
 		const explicitBody = (await explicit.json()) as { mailboxes: MailboxRow[] };
-		expect(explicitBody.mailboxes.map((row) => row.id)).toEqual([MBX_ADMIN_A]);
+		expect(explicitBody.mailboxes.map((row) => row.id).sort()).toEqual([MBX_ADMIN_A, MBX_USER_B].sort());
+
+		// A plain user still sees only what they own.
+		await signIn(USER_B);
+		const theirs = await GET(get("/api/mailboxes"), routeCtx());
+		expect(theirs.status).toBe(200);
+		const theirBody = (await theirs.json()) as { mailboxes: MailboxRow[] };
+		expect(theirBody.mailboxes.map((row) => row.id)).toEqual([MBX_USER_B]);
 	});
 
 	it("shows every mailbox of the organisation on ?scope=organization", async () => {

@@ -38,6 +38,10 @@ export async function getMailboxAccessLevel(
 
 	const isOwner = mailbox.userId === user.id;
 	if (isOwner) return buildAccess(mailbox, "full_access", true);
+	// An organisation admin can open every mailbox of the organisation, personal ones
+	// included. Not an owner: `isOwner` stays false, and the agent-mail / two-factor
+	// rule keys on ownership, not on this.
+	if (user.role === "admin") return buildAccess(mailbox, "full_access", false);
 	if (mailbox.type !== "shared") return null;
 
 	const [delegatedAccess] = await db
@@ -130,7 +134,46 @@ export async function listAccessibleMailboxes(
 		};
 	});
 
-	return [...owned, ...shared];
+	if (user.role !== "admin") return [...owned, ...shared];
+
+	// Admins: everything else in the organisation too, as full access (mirrors
+	// `getMailboxAccessLevel`). Owned and delegated rows keep their own entries.
+	const seen = new Set([...owned, ...shared].map((row) => row.id));
+	const restRows = await db
+		.select({
+			id: mailboxes.id,
+			userId: mailboxes.userId,
+			domainId: mailboxes.domainId,
+			localPart: mailboxes.localPart,
+			displayName: mailboxes.displayName,
+			signature: mailboxes.signature,
+			autoReplyEnabled: mailboxes.autoReplyEnabled,
+			autoReplySubject: mailboxes.autoReplySubject,
+			autoReplyBody: mailboxes.autoReplyBody,
+			useAllDomains: mailboxes.useAllDomains,
+			avatarKey: mailboxes.avatarKey,
+			type: mailboxes.type,
+			agentMail: mailboxes.agentMail,
+			disabled: mailboxes.disabled,
+			createdAt: mailboxes.createdAt,
+			hostname: domains.hostname,
+		})
+		.from(mailboxes)
+		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
+		.where(and(eq(mailboxes.disabled, false), ...inOrg));
+	const rest = restRows
+		.filter((row) => !seen.has(row.id))
+		.map((row) => {
+			const { avatarKey, ...mailbox } = row;
+			return {
+				...mailbox,
+				hasAvatar: !!avatarKey,
+				permission: "full_access" as MailboxPermission,
+				isPrimary: false,
+			};
+		});
+
+	return [...owned, ...shared, ...rest];
 }
 
 /**

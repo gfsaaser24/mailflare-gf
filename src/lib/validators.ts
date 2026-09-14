@@ -74,8 +74,10 @@ export const updateManagedAccountSchema = z.object({
 	role: z.enum(["admin", "user"]),
 	disabled: z.boolean(),
 	canManageMailboxes: z.boolean(),
+	// `null` is what `GET /api/accounts/[id]` returns for "no forwarding", and the
+	// permissions form sends it straight back, so it must round-trip.
 	forwardingEmail: z.preprocess(
-		(value) => (typeof value === "string" ? value.trim() : value),
+		(value) => (typeof value === "string" ? value.trim() : value === null ? "" : value),
 		z.string().email().or(z.literal("")).optional().transform((value) => value === undefined ? undefined : value || null),
 	),
 });

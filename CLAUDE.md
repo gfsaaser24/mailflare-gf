@@ -61,6 +61,11 @@ surface, don't spread `process.env` reads around. `BUCKET` is an R2Bucket-like a
   token and mailing it are detached from the response (`deferRecoveryWork` in
   `src/app/api/auth/forgot-password/utils.ts`), so a known and an unknown address leave by
   the same path in the same time. Tests await `flushRecoveryWork()`.
+- An organisation admin has `full_access` to EVERY mailbox of their organisation
+  (`getMailboxAccessLevel` / `listAccessibleMailboxes` in `src/lib/mailboxes/access.ts`),
+  personal ones included, with `isOwner: false`. Non-admins get what they own or were
+  delegated. Ownership (`mailboxes.user_id`) is still what the agent-mail rule and the
+  "primary" flag key on.
 - `mailboxes.agent_mail` marks an inbox an automated agent owns. TOTP and that flag are
   mutually exclusive on the OWNING account (`mailboxes.user_id`, never a delegate):
   `/api/auth/two-factor/setup|enable` answer 400 `two_factor_unavailable_agent_mail` for

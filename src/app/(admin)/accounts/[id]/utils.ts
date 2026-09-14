@@ -13,6 +13,29 @@ import type {
 	TransferTarget,
 } from "./types";
 
+/**
+ * The message to show for a failed response. `error` is usually a string, but a
+ * 400 from a zod-validated route carries `{ formErrors, fieldErrors }`; rendering
+ * that with `String()` gave "[object Object]".
+ */
+export function apiErrorMessage(data: { error?: unknown } | null | undefined, fallback: string): string {
+	const error = data?.error;
+	if (typeof error === "string" && error.trim()) return error;
+	if (error && typeof error === "object") {
+		const { formErrors, fieldErrors } = error as {
+			formErrors?: unknown;
+			fieldErrors?: Record<string, unknown>;
+		};
+		const parts: string[] = [];
+		if (Array.isArray(formErrors)) parts.push(...formErrors.map(String));
+		for (const [field, messages] of Object.entries(fieldErrors ?? {})) {
+			if (Array.isArray(messages) && messages.length) parts.push(`${field}: ${messages.map(String).join(", ")}`);
+		}
+		if (parts.length) return parts.join("; ");
+	}
+	return fallback;
+}
+
 export const permissionLabels: Record<NonNullable<AccountMailboxAccessItem["permission"]>, string> = {
 	read_only: "Read Only",
 	send_as: "Send As",
@@ -23,14 +46,14 @@ export const permissionLabels: Record<NonNullable<AccountMailboxAccessItem["perm
 export async function fetchAccountMailboxAccess(accountId: string): Promise<AccountMailboxAccessResponse> {
 	const res = await authFetch(`/api/accounts/${accountId}/mailbox-access`);
 	const json = (await res.json()) as AccountMailboxAccessResponse;
-	if (!res.ok) throw new Error(json.error ?? "Failed to load account access");
+	if (!res.ok) throw new Error(apiErrorMessage(json, "Failed to load account access"));
 	return json;
 }
 
 export async function fetchAccount(accountId: string): Promise<AccountDetail> {
 	const res = await authFetch(`/api/accounts/${accountId}`);
 	const json = (await res.json()) as AccountDetailResponse;
-	if (!res.ok || !json.account) throw new Error(json.error ?? "Failed to load account");
+	if (!res.ok || !json.account) throw new Error(apiErrorMessage(json, "Failed to load account"));
 	return json.account;
 }
 
@@ -43,21 +66,21 @@ export async function updateAccount(
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(input),
 	});
-	const json = (await res.json()) as { error?: string };
-	if (!res.ok) throw new Error(json.error ?? "Failed to update account");
+	const json = (await res.json()) as { error?: unknown };
+	if (!res.ok) throw new Error(apiErrorMessage(json, "Failed to update account"));
 }
 
 export async function fetchDomains(): Promise<DomainOption[]> {
 	const res = await authFetch("/api/domains");
 	const json = (await res.json()) as { domains?: DomainOption[]; error?: string };
-	if (!res.ok) throw new Error(json.error ?? "Failed to load domains");
+	if (!res.ok) throw new Error(apiErrorMessage(json, "Failed to load domains"));
 	return json.domains ?? [];
 }
 
 export async function fetchAccountMailboxes(accountId: string): Promise<AccountMailboxItem[]> {
 	const res = await authFetch(`/api/accounts/${accountId}/mailboxes`);
 	const json = (await res.json()) as { mailboxes?: AccountMailboxItem[]; error?: string };
-	if (!res.ok) throw new Error(json.error ?? "Failed to load account mailboxes");
+	if (!res.ok) throw new Error(apiErrorMessage(json, "Failed to load account mailboxes"));
 	return json.mailboxes ?? [];
 }
 
@@ -70,8 +93,8 @@ export async function createAccountMailbox(
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(input),
 	});
-	const json = (await res.json()) as { error?: string };
-	if (!res.ok) throw new Error(json.error ?? "Failed to create mailbox");
+	const json = (await res.json()) as { error?: unknown };
+	if (!res.ok) throw new Error(apiErrorMessage(json, "Failed to create mailbox"));
 }
 
 export async function grantAccountMailboxAccess(
@@ -84,16 +107,16 @@ export async function grantAccountMailboxAccess(
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ mailboxId, permission }),
 	});
-	const json = (await res.json()) as { error?: string };
-	if (!res.ok) throw new Error(json.error ?? "Failed to update access");
+	const json = (await res.json()) as { error?: unknown };
+	if (!res.ok) throw new Error(apiErrorMessage(json, "Failed to update access"));
 }
 
 export async function revokeAccountMailboxAccess(accountId: string, mailboxId: string): Promise<void> {
 	const res = await authFetch(`/api/accounts/${accountId}/mailbox-access?mailboxId=${encodeURIComponent(mailboxId)}`, {
 		method: "DELETE",
 	});
-	const json = (await res.json()) as { error?: string };
-	if (!res.ok) throw new Error(json.error ?? "Failed to remove access");
+	const json = (await res.json()) as { error?: unknown };
+	if (!res.ok) throw new Error(apiErrorMessage(json, "Failed to remove access"));
 }
 
 export function getMailboxAddress(mailbox: Pick<AccountMailboxAccessItem, "localPart" | "hostname">): string {
@@ -107,7 +130,7 @@ export function getMailboxLabel(mailbox: Pick<AccountMailboxAccessItem, "display
 export async function fetchManagedAccount(accountId: string): Promise<ManagedAccount> {
 	const response = await authFetch(`/api/accounts/${accountId}`);
 	const data = (await response.json()) as { account?: ManagedAccount; error?: string };
-	if (!response.ok || !data.account) throw new Error(data.error ?? "Unable to load account");
+	if (!response.ok || !data.account) throw new Error(apiErrorMessage(data, "Unable to load account"));
 	return data.account;
 }
 
@@ -123,8 +146,8 @@ export async function saveManagedAccount(account: ManagedAccount): Promise<void>
 			forwardingEmail: account.forwardingEmail,
 		}),
 	});
-	const data = (await response.json()) as { error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to update account");
+	const data = (await response.json()) as { error?: unknown };
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to update account"));
 }
 
 export async function uploadManagedAccountAvatar(accountId: string, file: File): Promise<void> {
@@ -137,14 +160,14 @@ export async function uploadManagedAccountAvatar(accountId: string, file: File):
 export async function fetchManagedMailboxes(accountId: string): Promise<ManagedMailbox[]> {
 	const response = await authFetch(`/api/accounts/${accountId}/mailboxes`);
 	const data = (await response.json()) as { mailboxes?: ManagedMailbox[]; error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to load mailboxes");
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to load mailboxes"));
 	return data.mailboxes ?? [];
 }
 
 export async function fetchManagedDomains(): Promise<ManagedDomain[]> {
 	const response = await authFetch("/api/domains");
 	const data = (await response.json()) as { domains?: ManagedDomain[]; error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to load domains");
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to load domains"));
 	return data.domains ?? [];
 }
 
@@ -163,21 +186,21 @@ export async function addManagedMailbox(
 			type: "personal",
 		}),
 	});
-	const data = (await response.json()) as { error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to add mailbox");
+	const data = (await response.json()) as { error?: unknown };
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to add mailbox"));
 }
 
 export async function removeManagedMailbox(mailboxId: string): Promise<void> {
 	const response = await authFetch(`/api/mailboxes/${mailboxId}`, { method: "DELETE" });
-	const data = (await response.json()) as { error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to remove mailbox");
+	const data = (await response.json()) as { error?: unknown };
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to remove mailbox"));
 }
 
 /** T3.5: reissue the set-password invite. */
 export async function resendManagedAccountInvite(accountId: string): Promise<InviteActionResult> {
 	const response = await authFetch(`/api/accounts/${accountId}/invite`, { method: "POST" });
 	const data = (await response.json()) as InviteActionResult & { error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to send the invite");
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to send the invite"));
 	return data;
 }
 
@@ -188,14 +211,14 @@ export async function transferManagedAccount(accountId: string, toUserId: string
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ toUserId }),
 	});
-	const data = (await response.json()) as { error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to transfer ownership");
+	const data = (await response.json()) as { error?: unknown };
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to transfer ownership"));
 }
 
 /** Every account of the caller's organisation, for the transfer target picker. */
 export async function fetchTransferTargets(accountId: string): Promise<TransferTarget[]> {
 	const response = await authFetch("/api/accounts");
 	const data = (await response.json()) as { accounts?: TransferTarget[]; error?: string };
-	if (!response.ok) throw new Error(data.error ?? "Unable to load accounts");
+	if (!response.ok) throw new Error(apiErrorMessage(data, "Unable to load accounts"));
 	return (data.accounts ?? []).filter((account) => account.id !== accountId && !account.disabled);
 }
