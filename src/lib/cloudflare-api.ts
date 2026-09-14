@@ -9,6 +9,18 @@ import {
 import { getZoneLookupCandidates } from "@/lib/domains/utils";
 export type { CfDnsRecord } from "@/lib/cloudflare-api.types";
 
+/** A Cloudflare API response with `success: false`; `codes` are Cloudflare's own error codes. */
+export class CloudflareApiError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		readonly codes: number[],
+	) {
+		super(message);
+		this.name = "CloudflareApiError";
+	}
+}
+
 export async function cfRequest<T>(
 	env: CloudflareEnv,
 	path: string,
@@ -26,8 +38,10 @@ export async function cfRequest<T>(
 	const json = (await res.json()) as CfResponse<T>;
 
 	if (!json.success) {
-		throw new Error(
+		throw new CloudflareApiError(
 			`${formatCloudflareError(path, res.status, res.statusText, json.errors ?? [])}${getCloudflareAuthHint(json.errors ?? [])}`,
+			res.status,
+			(json.errors ?? []).map((error) => error.code).filter((code): code is number => typeof code === "number"),
 		);
 	}
 	return json.result;
@@ -149,11 +163,18 @@ export async function getEmailRoutingSettings(
 	);
 }
 
+/** Every routing rule on the zone. Cloudflare pages this list, so walk it to the end. */
 export async function listEmailRoutingRules(env: CloudflareEnv, zoneId: string) {
-	return cfRequest<CfEmailRoutingRule[]>(
-		env,
-		`/zones/${zoneId}/email/routing/rules`,
-	);
+	const perPage = 50;
+	const rules: CfEmailRoutingRule[] = [];
+	for (let page = 1; ; page += 1) {
+		const batch = await cfRequest<CfEmailRoutingRule[]>(
+			env,
+			`/zones/${zoneId}/email/routing/rules?per_page=${perPage}&page=${page}`,
+		);
+		rules.push(...batch);
+		if (batch.length < perPage) return rules;
+	}
 }
 
 export async function deleteEmailRoutingRule(
@@ -189,6 +210,32 @@ export async function createEmailRoutingRuleToWorker(
 	);
 }
 
+/** Cloudflare error code for "a rule with this matcher already exists" (409). */
+const CF_DUPLICATE_RULE_CODE = 2014;
+
+function ruleMatchesAddress(rule: CfEmailRoutingRule, address: string): boolean {
+	return Boolean(
+		rule.matchers?.some(
+			(matcher) =>
+				matcher.type === "literal" && matcher.field === "to" && matcher.value?.toLowerCase() === address,
+		),
+	);
+}
+
+function ruleSendsToWorker(rule: CfEmailRoutingRule, workerName: string): boolean {
+	return Boolean(
+		rule.actions?.some(
+			(action) =>
+				action.type === "worker" && (action.value?.length ? action.value.includes(workerName) : true),
+		),
+	);
+}
+
+/**
+ * Make sure mail for `address` reaches our worker. Cloudflare allows exactly one rule per
+ * literal address, so any rule already matching it — a hand-made forward, a rule aimed at
+ * another worker, a disabled one — is taken over rather than duplicated (which is a 409).
+ */
 export async function ensureEmailRoutingRuleToWorker(
 	env: CloudflareEnv,
 	zoneId: string,
@@ -196,34 +243,41 @@ export async function ensureEmailRoutingRuleToWorker(
 ) {
 	const normalized = address.toLowerCase();
 	const workerName = getEmailWorkerName(env);
-	const rules = await listEmailRoutingRules(env, zoneId);
-	const existing = rules.find((rule) => {
-		const routesAddress = rule.matchers?.some(
-			(matcher) => matcher.type === "literal" && matcher.field === "to" && matcher.value?.toLowerCase() === normalized,
-		);
-		const sendsToWorker = rule.actions?.some(
-			(action) => action.type === "worker" && (action.value?.length ? action.value.includes(workerName) : true),
-		);
-		return routesAddress && sendsToWorker;
-	});
 
-	if (existing?.enabled) return existing;
-	if (existing?.id) {
-		return cfRequest<CfEmailRoutingRule>(
-			env,
-			`/zones/${zoneId}/email/routing/rules/${existing.id}`,
-			{
-				method: "PUT",
-				body: JSON.stringify({
-					actions: [{ type: "worker", value: [workerName] }],
-					enabled: true,
-					matchers: [{ type: "literal", field: "to", value: normalized }],
-					name: existing.name ?? `Route ${normalized} to ${workerName}`,
-					priority: existing.priority,
-				}),
-			},
+	const takeOver = (existing: CfEmailRoutingRule & { id: string }) =>
+		cfRequest<CfEmailRoutingRule>(env, `/zones/${zoneId}/email/routing/rules/${existing.id}`, {
+			method: "PUT",
+			body: JSON.stringify({
+				actions: [{ type: "worker", value: [workerName] }],
+				enabled: true,
+				matchers: [{ type: "literal", field: "to", value: normalized }],
+				name: `Route ${normalized} to ${workerName}`,
+				priority: existing.priority,
+			}),
+		});
+
+	const findExisting = async () => {
+		const rules = await listEmailRoutingRules(env, zoneId);
+		return rules.find(
+			(rule): rule is CfEmailRoutingRule & { id: string } =>
+				Boolean(rule.id) && ruleMatchesAddress(rule, normalized),
 		);
+	};
+
+	const existing = await findExisting();
+	if (existing) {
+		if (existing.enabled && ruleSendsToWorker(existing, workerName)) return existing;
+		return takeOver(existing);
 	}
 
-	return createEmailRoutingRuleToWorker(env, zoneId, normalized);
+	try {
+		return await createEmailRoutingRuleToWorker(env, zoneId, normalized);
+	} catch (error) {
+		// Created between our list and our POST, or by a client the list never showed.
+		if (!(error instanceof CloudflareApiError) || !error.codes.includes(CF_DUPLICATE_RULE_CODE)) throw error;
+		const raced = await findExisting();
+		if (!raced) throw error;
+		if (raced.enabled && ruleSendsToWorker(raced, workerName)) return raced;
+		return takeOver(raced);
+	}
 }
