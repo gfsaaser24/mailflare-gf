@@ -55,6 +55,7 @@ vi.mock("@/lib/cloudflare-api", () => ({
 	}),
 	getEmailRoutingDns: vi.fn(async () => ({ records: [], missing: [] })),
 	getSendingSubdomainDns: vi.fn(async () => []),
+	fixSendingSubdomainDns: vi.fn(async () => ({ records: [], errors: [], status: "ready" })),
 	listEmailRoutingRules: vi.fn(async () => []),
 	deleteEmailRoutingRule: vi.fn(async () => ({})),
 }));
@@ -98,6 +99,27 @@ describe.skipIf(!hasTestDatabase())("provisionDomain", () => {
 
 	afterAll(async () => {
 		await closeTestDatabase();
+	});
+
+	it("onboards the zone apex for sending too and publishes its DNS", async () => {
+		await insertOwner();
+		const env = testEnv();
+
+		// The zone is "example.test"; provisioning that very hostname is the apex case,
+		// which used to skip sending and left the binding unable to reach anyone but
+		// the account's verified destination addresses.
+		const result = await provisionDomain(env, {
+			hostname: "example.test",
+			userId: USER_ID,
+			enableRouting: true,
+			enableSending: true,
+		});
+
+		expect(result.created.sendingSubdomain).toBe(true);
+		expect(result.sendingEnabled).toBe(true);
+		expect(result.domain?.sendingSubdomainTag).toBe("sub_1");
+		expect(zoneState.subdomains).toEqual([{ tag: "sub_1", name: "example.test", enabled: true }]);
+		expect(cf.fixSendingSubdomainDns).toHaveBeenCalledWith(env, "zone_1", "sub_1");
 	});
 
 	it("creates routing, the sending subdomain, the catch-all rule and the row", async () => {

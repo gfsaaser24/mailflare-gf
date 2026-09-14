@@ -14,7 +14,7 @@ Queues, no Durable Objects. Never reintroduce them.
 | Database | Supabase Postgres on **supascale** (Vultr `45.63.13.90`), project id `mailflare` | Supavisor: DB user is `postgres.your-tenant-id`; 56322 = session pool, 56329 = transaction pool |
 | Object storage | Supabase Storage on that project, bucket `mail`, via its S3 gateway `/storage/v1/s3` | supascale backs Storage with Cloudflare R2 bucket `mailflare-storage` (compose overlay `docker-compose.r2.yml`) |
 | Inbound mail | Cloudflare Email Routing → thin worker **`mailflare-edge`** (`cloudflare-worker/`) → `POST /api/edge/inbound` | worker stores nothing; 404 from the app = reject, other error = temp reject |
-| Outbound mail | app → `POST <EDGE_WORKER_URL>/send` → Cloudflare `send_email` binding | transport is pluggable (`src/lib/email/transport.ts`); Maillayer/SES not used |
+| Outbound mail | app → `POST <EDGE_WORKER_URL>/send` → Cloudflare `send_email` binding | transport is pluggable (`src/lib/email/transport.ts`); Maillayer/SES not used. The binding only reaches arbitrary recipients when the sender's domain is onboarded for **Email Sending** (a "sending subdomain" on the zone, apex included, with its `cf-bounce.<host>` DNS published) — otherwise every send to a non-verified address fails with "destination address is not a verified address". `provisionDomain` does this for every domain incl. apex; `reconcileDomain` adopts one that already exists on Cloudflare. |
 | Realtime | in-process emitter + SSE at `/api/realtime` | single app container; no DO |
 | Backups | run inline in the app process; supascale handles DB backups/scheduling | |
 

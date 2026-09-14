@@ -53,6 +53,8 @@ type LiveState = {
 	catchAllToWorker: boolean;
 	sendingSubdomainPresent: boolean;
 	sendingSubdomainVerified: boolean;
+	/** Tag of the Cloudflare sending domain matching this row, when there is one. */
+	sendingSubdomainTag: string | null;
 	routingRecords: CfDnsRecord[];
 	routingMissing: CfDnsRecord[];
 	sendingRecords: CfDnsRecord[];
@@ -61,11 +63,12 @@ type LiveState = {
 /** Everything reconcile needs from Cloudflare, fetched in parallel where possible. */
 async function fetchLiveState(env: CloudflareEnv, row: DomainRow): Promise<LiveState> {
 	const workerName = getEmailWorkerName(env);
-	const wantsSending = Boolean(row.sendingSubdomainTag) || row.sendingEnabled;
+	// Always look for a sending domain: one that was onboarded outside the app (or
+	// before apex sending existed) is adopted by `reconcileDomain`.
 	const [settings, catchAll, subdomains, routingDns] = await Promise.all([
 		getEmailRoutingSettings(env, row.zoneId),
 		getEmailRoutingCatchAllRule(env, row.zoneId).catch(() => null),
-		wantsSending ? listSendingSubdomains(env, row.zoneId) : Promise.resolve([]),
+		listSendingSubdomains(env, row.zoneId).catch(() => []),
 		getEmailRoutingDns(env, row.zoneId),
 	]);
 
@@ -85,6 +88,7 @@ async function fetchLiveState(env: CloudflareEnv, row: DomainRow): Promise<LiveS
 		catchAllToWorker: catchAllRoutesToWorker(catchAll, workerName),
 		sendingSubdomainPresent: Boolean(subdomain),
 		sendingSubdomainVerified: subdomain?.enabled === true,
+		sendingSubdomainTag: subdomain?.tag ?? null,
 		routingRecords: routingDns.records,
 		routingMissing: routingDns.missing,
 		sendingRecords,
@@ -154,6 +158,8 @@ export async function reconcileDomain(
 	let statusReason: string | null;
 	let dnsOk: boolean;
 	let routingStatus: string | null = row.routingStatus ?? null;
+	/** Set when Cloudflare has a sending domain for this hostname the row did not know about. */
+	let adopted: { sendingSubdomainTag: string; sendingEnabled: boolean } | null = null;
 
 	if (neverProvisioned(row)) {
 		status = "pending";
@@ -163,7 +169,13 @@ export async function reconcileDomain(
 		try {
 			const live = await fetchLiveState(env, row);
 			routingStatus = live.routingStatus ?? routingStatus;
-			({ status, statusReason, dnsOk } = evaluate(row, live));
+			if (live.sendingSubdomainTag && (!row.sendingSubdomainTag || !row.sendingEnabled)) {
+				adopted = {
+					sendingSubdomainTag: live.sendingSubdomainTag,
+					sendingEnabled: live.sendingSubdomainVerified,
+				};
+			}
+			({ status, statusReason, dnsOk } = evaluate(adopted ? { ...row, ...adopted } : row, live));
 		} catch (error) {
 			status = "error";
 			statusReason = messageOf(error, "Failed to read Cloudflare state");
@@ -175,11 +187,12 @@ export async function reconcileDomain(
 		row.status !== status ||
 		(row.statusReason ?? null) !== statusReason ||
 		row.dnsOk !== dnsOk ||
-		(row.routingStatus ?? null) !== routingStatus;
+		(row.routingStatus ?? null) !== routingStatus ||
+		adopted !== null;
 
 	await db
 		.update(domains)
-		.set({ status, statusReason, dnsOk, routingStatus, lastCheckedAt })
+		.set({ status, statusReason, dnsOk, routingStatus, lastCheckedAt, ...(adopted ?? {}) })
 		.where(and(eq(domains.id, row.id), eq(domains.organizationId, row.organizationId)));
 
 	return {

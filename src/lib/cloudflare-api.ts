@@ -142,6 +142,22 @@ export async function deleteSendingSubdomain(
 	);
 }
 
+/**
+ * Asks Cloudflare to publish the MX/SPF/DKIM/DMARC records of a sending domain in the
+ * zone ("Fix sending subdomain DNS records"). Cloudflare only adds what is missing.
+ */
+export async function fixSendingSubdomainDns(
+	env: CloudflareEnv,
+	zoneId: string,
+	subdomainTag: string,
+): Promise<{ records?: CfDnsRecord[]; errors?: unknown[]; status?: string }> {
+	return cfRequest<{ records?: CfDnsRecord[]; errors?: unknown[]; status?: string }>(
+		env,
+		`/zones/${zoneId}/email/sending/subdomains/${subdomainTag}/dns`,
+		{ method: "POST" },
+	);
+}
+
 export async function getSendingSubdomainDns(
 	env: CloudflareEnv,
 	zoneId: string,

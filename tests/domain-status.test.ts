@@ -215,6 +215,21 @@ describe.skipIf(!hasTestDatabase())("reconcileDomain", () => {
 		expect(result.dnsOk).toBe(false);
 	});
 
+	it("adopts a sending domain Cloudflare already has for the hostname", async () => {
+		// Routing was provisioned, sending never was (apex domains before the fix, or a
+		// domain onboarded by hand in the Cloudflare dashboard).
+		await insertDomain({ sendingEnabled: false, sendingSubdomainTag: null });
+
+		const result = await reconcileDomain(testEnv(), DOMAIN_ID);
+
+		expect(result.status).toBe("active");
+		expect(result.changed).toBe(true);
+		const row = await readDomain(DOMAIN_ID);
+		expect(row.sendingEnabled).toBe(true);
+		expect(row.sendingSubdomainTag).toBe("sub_1");
+		expect(row.dnsOk).toBe(true);
+	});
+
 	it("stays pending for a row that was never provisioned", async () => {
 		await insertDomain({
 			routingEnabled: false,

@@ -6,6 +6,7 @@ import { DEFAULT_ORGANIZATION_ID } from "@/lib/organizations/constants";
 import {
 	createSendingSubdomain,
 	deleteSendingSubdomain,
+	fixSendingSubdomainDns,
 	disableEmailRouting,
 	enableEmailRouting,
 	findZoneByHostname,
@@ -145,10 +146,14 @@ export async function provisionDomain(
 		}
 	}
 
-	// 3. Sending subdomain (optional; reuse when it already exists).
+	// 3. Sending domain (optional; reuse when it already exists). The zone apex is a
+	//    valid sending domain: Cloudflare onboards it with a `cf-bounce.<host>`
+	//    return-path subdomain, so an apex mailbox can send to any address. Without
+	//    this the `send_email` binding only delivers to the account's verified
+	//    destination addresses ("destination address is not a verified address").
 	let sendingEnabled = false;
 	let sendingSubdomainTag: string | null = null;
-	if (wantSending && !apex) {
+	if (wantSending) {
 		try {
 			const subdomains = await listSendingSubdomains(env, zoneId);
 			const existing = subdomains.find((sub) => sub.name === hostname);
@@ -165,6 +170,15 @@ export async function provisionDomain(
 			}
 		} catch (error) {
 			return fail("sending", error);
+		}
+		// Publish the records in the zone. Best effort: a zone that refuses (say a
+		// conflicting record) still gets its domain; reconcile reports what is missing.
+		if (sendingSubdomainTag) {
+			try {
+				await fixSendingSubdomainDns(env, zoneId, sendingSubdomainTag);
+			} catch (error) {
+				console.warn(`provisionDomain: could not publish sending DNS for ${hostname}`, error);
+			}
 		}
 	}
 
