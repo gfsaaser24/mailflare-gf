@@ -1,5 +1,15 @@
 /** Request bodies and query strings for the v1 API (T6.2). */
 import { z } from "zod";
+import { MAX_RECIPIENTS, normalizeRecipients } from "@/lib/email/recipients";
+
+/**
+ * A draft recipient field: one address, several separated by `,`/`;`, or an
+ * array. Unlike a send, a draft is not required to hold valid addresses — it is
+ * half-written by definition — so only the shape and the total count are checked.
+ */
+const draftRecipientField = z
+	.union([z.string().max(8000), z.array(z.string().max(500)).max(MAX_RECIPIENTS)])
+	.transform((value) => normalizeRecipients(value));
 
 /** `POST /api/v1/conversations/[id]/reply`. */
 export const v1ReplySchema = z
@@ -53,18 +63,29 @@ export const v1ContactQuerySchema = z.object({
 });
 
 /** `POST /api/v1/drafts`. */
-export const v1DraftSchema = z.object({
-	mailboxId: z.string().min(1).max(200),
-	/** Defaults to the mailbox's own address. */
-	from: z.string().min(3).max(500).optional(),
-	to: z.string().max(500).optional(),
-	subject: z.string().max(500).optional(),
-	text: z
-		.string()
-		.max(2 * 1024 * 1024)
-		.optional(),
-	html: z
-		.string()
-		.max(2 * 1024 * 1024)
-		.optional(),
-});
+export const v1DraftSchema = z
+	.object({
+		mailboxId: z.string().min(1).max(200),
+		/** Defaults to the mailbox's own address. */
+		from: z.string().min(3).max(500).optional(),
+		to: z.string().max(500).optional(),
+		cc: draftRecipientField.optional(),
+		bcc: draftRecipientField.optional(),
+		subject: z.string().max(500).optional(),
+		text: z
+			.string()
+			.max(2 * 1024 * 1024)
+			.optional(),
+		html: z
+			.string()
+			.max(2 * 1024 * 1024)
+			.optional(),
+	})
+	// The ceiling is the envelope one a send has: `to` + `cc` + `bcc` together,
+	// not per field.
+	.refine(
+		(value) =>
+			normalizeRecipients(value.to).length + (value.cc?.length ?? 0) + (value.bcc?.length ?? 0) <=
+			MAX_RECIPIENTS,
+		{ message: `A message can have at most ${MAX_RECIPIENTS} recipients in total`, path: ["to"] },
+	);

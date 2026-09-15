@@ -401,7 +401,10 @@ paths:
       summary: Create a draft
       description: |
         Stores an unsent outbound message. `from` defaults to the mailbox's own
-        address and is authorised exactly as a real send would be.
+        address and is authorised exactly as a real send would be. `cc` and
+        `bcc` are stored comma-joined and returned that way, and `to` + `cc` +
+        `bcc` may not exceed 50 addresses in total, as on a send. A draft is
+        half-written by definition, so its addresses are not checked for shape.
         Scope: `messages:write`.
       operationId: createDraft
       requestBody:
@@ -791,6 +794,8 @@ components:
           maxLength: 500
           description: Defaults to the mailbox's own address.
         to: { type: string, maxLength: 500 }
+        cc: { $ref: "#/components/schemas/RecipientList" }
+        bcc: { $ref: "#/components/schemas/RecipientList" }
         subject: { type: string, maxLength: 500 }
         text: { type: string }
         html: { type: string }
@@ -803,6 +808,12 @@ components:
         mailboxId: { type: string }
         from: { type: string }
         to: { type: string }
+        cc:
+          type: [string, "null"]
+          description: Comma-joined, as stored. Null when the draft has no Cc.
+        bcc:
+          type: [string, "null"]
+          description: Comma-joined, as stored. Null when the draft has no Bcc.
         subject: { type: [string, "null"] }
         status: { type: string, const: draft }
 

@@ -30,8 +30,8 @@ export function ComposeForm({
 	const [to, setTo] = useState("");
 	const [cc, setCc] = useState("");
 	const [bcc, setBcc] = useState("");
-	// Cc and Bcc stay hidden until asked for. Drafts do not carry them, so a
-	// reloaded draft always starts collapsed.
+	// Cc and Bcc stay hidden until asked for, or until a reloaded draft turns out
+	// to carry one of them.
 	const [showCopyFields, setShowCopyFields] = useState(false);
 	const [subject, setSubject] = useState("");
 	const [text, setText] = useState("");
@@ -94,6 +94,9 @@ export function ComposeForm({
 
 				setDraftId(draft.id);
 				setTo(draft.toAddr);
+				setCc(draft.ccAddr ?? "");
+				setBcc(draft.bccAddr ?? "");
+				if (draft.ccAddr || draft.bccAddr) setShowCopyFields(true);
 				setSubject(draft.subject ?? "");
 				setText(draft.textBody ?? "");
 				setLoadedDraftMailboxId(draft.mailboxId);
@@ -136,7 +139,8 @@ export function ComposeForm({
 	useEffect(() => {
 		const bodyContent = text.trim();
 		const signatureOnly = bodyContent === (selectedMailbox?.signature?.trim() ?? "");
-		const hasContent = to.trim() || subject.trim() || (bodyContent && !signatureOnly);
+		const hasContent =
+			to.trim() || cc.trim() || bcc.trim() || subject.trim() || (bodyContent && !signatureOnly);
 		if (!fromAddr || !hasContent || loadingDraft) return;
 		if (saveTimer.current) clearTimeout(saveTimer.current);
 
@@ -145,6 +149,8 @@ export function ComposeForm({
 				mailboxId: selectedMailbox?.id,
 				from: fromAddr,
 				to,
+				cc,
+				bcc,
 				subject,
 				text,
 			};
@@ -160,7 +166,18 @@ export function ComposeForm({
 		return () => {
 			if (saveTimer.current) clearTimeout(saveTimer.current);
 		};
-	}, [draftId, fromAddr, loadingDraft, selectedMailbox?.id, selectedMailbox?.signature, subject, text, to]);
+	}, [
+		bcc,
+		cc,
+		draftId,
+		fromAddr,
+		loadingDraft,
+		selectedMailbox?.id,
+		selectedMailbox?.signature,
+		subject,
+		text,
+		to,
+	]);
 
 	async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();

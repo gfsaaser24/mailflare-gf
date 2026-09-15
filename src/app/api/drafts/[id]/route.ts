@@ -7,7 +7,7 @@ import type { DraftPayload, DraftRouteParams } from "./types";
 import { selectDraftWithBody } from "./utils";
 import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
-import { getDraftSender, userOwnsDraft } from "../utils";
+import { getDraftRecipients, getDraftSender, userOwnsDraft } from "../utils";
 
 export const GET = withOrg(async (ctx, _request, { params }: DraftRouteParams) => {
 	const { id } = await params;
@@ -44,6 +44,11 @@ export const PATCH = withOrg(async (ctx, request, { params }: DraftRouteParams) 
 		return NextResponse.json({ error: sender.error }, { status: 403 });
 	}
 
+	const recipients = getDraftRecipients(input);
+	if ("error" in recipients) {
+		return NextResponse.json({ error: recipients.error }, { status: 400 });
+	}
+
 	const text = input.text ?? "";
 	const html = input.html ?? "";
 	await db
@@ -51,7 +56,9 @@ export const PATCH = withOrg(async (ctx, request, { params }: DraftRouteParams) 
 		.set({
 			mailboxId: sender.mailboxId,
 			fromAddr: sender.fromAddr,
-			toAddr: input.to ?? "",
+			toAddr: recipients.toAddr,
+			ccAddr: recipients.ccAddr,
+			bccAddr: recipients.bccAddr,
 			subject: input.subject ?? null,
 			snippet: buildSnippet(text || null, html || null),
 			textBody: text || null,

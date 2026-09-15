@@ -107,7 +107,9 @@ Send email through `POST /api/v1/send`. Attachments are optional and use Base64-
 
 The stored message keeps the lists comma-joined in `to_addr`, `cc_addr` and `bcc_addr`. Threading uses the first `to` address. Every `to`, `cc` and `bcc` address becomes a contact.
 
-The dashboard composer has a **Cc / Bcc** toggle beside the To field, and accepts up to 10 attachments, with a 10 MB limit per file and a 20 MB combined limit. Attachment metadata is stored in D1 and file content is stored in R2. Downloads require access to the mailbox containing the message.
+Drafts keep Cc and Bcc as well: `POST`/`PATCH /api/drafts` and `POST /api/v1/drafts` accept `cc` and `bcc` in the same shapes, store them comma-joined, and hand them back on read, so a saved draft reopens with both fields filled. The 50-address total applies there too; a draft's addresses are not checked for shape, because a draft is half-written by definition.
+
+The dashboard composer has a **Cc / Bcc** toggle beside the To field, which opens by itself when a reopened draft carries either, and accepts up to 10 attachments, with a 10 MB limit per file and a 20 MB combined limit. Attachment metadata is stored in D1 and file content is stored in R2. Downloads require access to the mailbox containing the message.
 
 ## API keys
 

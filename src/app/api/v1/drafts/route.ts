@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { messages } from "@/db/schema";
 import { getAuthorizedSenderAddress } from "@/lib/email/sender";
 import { buildSnippet } from "@/lib/email/parse";
+import { joinRecipients } from "@/lib/email/recipients";
 import { newId } from "@/lib/ids";
 import { getMailboxAddress } from "../access";
 import { v1DraftSchema } from "../schemas";
@@ -38,6 +39,10 @@ export const POST = v1Route(
 		}
 
 		const id = newId("msg");
+		// Stored comma-joined, the shape `sendEmail` writes, so sending the draft
+		// later reads back exactly what was saved.
+		const ccAddr = joinRecipients(input.cc ?? []);
+		const bccAddr = joinRecipients(input.bcc ?? []);
 		const text = input.text ?? "";
 		const html = input.html ?? "";
 		await ctx.db.insert(messages).values(
@@ -48,6 +53,8 @@ export const POST = v1Route(
 				direction: "outbound",
 				fromAddr: sender.fromAddr,
 				toAddr: input.to ?? "",
+				ccAddr,
+				bccAddr,
 				subject: input.subject ?? null,
 				snippet: buildSnippet(text || null, html || null),
 				textBody: text || null,
@@ -64,6 +71,8 @@ export const POST = v1Route(
 					mailboxId: sender.mailboxId,
 					from: sender.fromAddr,
 					to: input.to ?? "",
+					cc: ccAddr,
+					bcc: bccAddr,
 					subject: input.subject ?? null,
 					status: "draft",
 				},

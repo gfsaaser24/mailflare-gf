@@ -7,7 +7,7 @@ import { buildSnippet } from "@/lib/email/parse";
 import { readJsonBody } from "@/lib/http/request";
 import { RequestBodyTooLargeError } from "@/lib/http/errors";
 import type { DraftPayload } from "./types";
-import { getDraftSender } from "./utils";
+import { getDraftRecipients, getDraftSender } from "./utils";
 
 export const GET = withOrg(async ({ db, user, scoped }, request) => {
 	const url = new URL(request.url);
@@ -41,6 +41,10 @@ export const POST = withOrg(async ({ env, db, user, orgId, insertValues }, reque
 	if ("error" in sender) {
 		return NextResponse.json({ error: sender.error }, { status: 403 });
 	}
+	const recipients = getDraftRecipients(input);
+	if ("error" in recipients) {
+		return NextResponse.json({ error: recipients.error }, { status: 400 });
+	}
 	const draftId = newId("msg");
 	const text = input.text ?? "";
 	const html = input.html ?? "";
@@ -52,7 +56,9 @@ export const POST = withOrg(async ({ env, db, user, orgId, insertValues }, reque
 			mailboxId: sender.mailboxId,
 			direction: "outbound",
 			fromAddr: sender.fromAddr,
-			toAddr: input.to ?? "",
+			toAddr: recipients.toAddr,
+			ccAddr: recipients.ccAddr,
+			bccAddr: recipients.bccAddr,
 			subject: input.subject ?? null,
 			snippet: buildSnippet(text || null, html || null),
 			textBody: text || null,
