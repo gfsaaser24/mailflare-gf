@@ -66,6 +66,10 @@ surface, don't spread `process.env` reads around. `BUCKET` is an R2Bucket-like a
   personal ones included, with `isOwner: false`. Non-admins get what they own or were
   delegated. Ownership (`mailboxes.user_id`) is still what the agent-mail rule and the
   "primary" flag key on.
+- `mailboxes.use_all_domains` (alias the local part on every domain of the account) is OFF
+  by default since migration 0014, which also switched it off on every existing row: with
+  it on, each mailbox showed up as an alias on every domain in the composer's From list.
+  The admin mailbox page still offers it per mailbox.
 - `mailboxes.agent_mail` marks an inbox an automated agent owns. TOTP and that flag are
   mutually exclusive on the OWNING account (`mailboxes.user_id`, never a delegate):
   `/api/auth/two-factor/setup|enable` answer 400 `two_factor_unavailable_agent_mail` for

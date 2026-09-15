@@ -56,15 +56,24 @@ export function ComposeForm({
 			? selectedMailbox.senderAddresses
 			: [`${selectedMailbox.localPart}@${selectedMailbox.hostname}`];
 	}, [selectedMailbox]);
-	const senderOptions = useMemo(
-		() => mailboxes.flatMap((mailbox) => {
+	const senderOptions = useMemo(() => {
+		// Two mailboxes with the same local part can both claim an alias domain; the
+		// From list shows each address once, under the mailbox that listed it first.
+		const seen = new Set<string>();
+		return mailboxes.flatMap((mailbox) => {
 			const addresses = mailbox.senderAddresses?.length
 				? mailbox.senderAddresses
 				: [`${mailbox.localPart}@${mailbox.hostname}`];
-			return addresses.map((address) => ({ mailbox, address }));
-		}),
-		[mailboxes],
-	);
+			return addresses
+				.filter((address) => {
+					const key = address.toLowerCase();
+					if (seen.has(key)) return false;
+					seen.add(key);
+					return true;
+				})
+				.map((address) => ({ mailbox, address }));
+		});
+	}, [mailboxes]);
 	const fromAddr = selectedMailbox && selectedFrom
 		? formatEmailAddress(selectedFrom, selectedMailbox.displayName)
 		: "";

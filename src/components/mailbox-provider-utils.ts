@@ -9,6 +9,19 @@ let mailboxesRequest: Promise<MailboxOption[]> | null = null;
 let mailboxesRequestSession: boolean | null = null;
 let cacheGeneration = 0;
 export const SELECTED_MAILBOX_STORAGE_KEY = "selected-mailbox-id";
+/** `CustomEvent<{ mailboxId: string }>`: ask the MailboxProvider to select a mailbox. */
+export const SELECT_MAILBOX_EVENT = "mailflare:select-mailbox";
+
+/**
+ * Switch the app to `mailboxId`. The new-mail popup lives outside the provider
+ * (it is mounted in `Providers`, above the dashboard layout), so it cannot call
+ * the context; it stores the id for the next mount and tells any live provider.
+ */
+export function requestMailboxSelection(mailboxId: string): void {
+	if (typeof window === "undefined") return;
+	localStorage.setItem(SELECTED_MAILBOX_STORAGE_KEY, mailboxId);
+	window.dispatchEvent(new CustomEvent(SELECT_MAILBOX_EVENT, { detail: { mailboxId } }));
+}
 
 export function clearMailboxesCache() {
 	cacheGeneration += 1;

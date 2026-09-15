@@ -77,7 +77,7 @@ export async function POST(request: Request) {
 			localPart: username,
 			displayName: username,
 		});
-		await ensureMailboxDomainRouting(env, db, { id: mailboxId, domainId: domain.id, localPart: username, useAllDomains: true });
+		await ensureMailboxDomainRouting(env, db, { id: mailboxId, domainId: domain.id, localPart: username, useAllDomains: false });
 	} catch (err) {
 		await db.delete(users).where(eq(users.id, userId));
 		const message = err instanceof Error ? err.message : "Domain setup failed";

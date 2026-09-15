@@ -103,7 +103,7 @@ export const POST = withOrg(async (ctx, request) => {
 		await ensureMailboxDomainRouting(
 			env,
 			db,
-			{ id: mailboxId, domainId: domain.id, localPart: username, useAllDomains: true },
+			{ id: mailboxId, domainId: domain.id, localPart: username, useAllDomains: false },
 			ctx.orgId,
 		);
 

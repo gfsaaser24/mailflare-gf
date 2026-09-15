@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Mail, X } from "lucide-react";
 import { getEmailDisplayName } from "@/lib/email/address";
+import { requestMailboxSelection } from "./mailbox-provider-utils";
 import type { NewMessagePopupProps } from "./new-message-popup-types";
 
 export function NewMessagePopup({
@@ -17,7 +18,12 @@ export function NewMessagePopup({
 				</div>
 				<Link
 					href={`/inbox/${notification.messageId}`}
-					onClick={onDismiss}
+					onClick={() => {
+						// The message may belong to another mailbox the reader can open (an
+						// admin, or a shared inbox): switch to it so the inbox view matches.
+						requestMailboxSelection(notification.mailboxId);
+						onDismiss();
+					}}
 					className="min-w-0 flex-1"
 				>
 					<p className="text-sm font-semibold text-neutral-900">

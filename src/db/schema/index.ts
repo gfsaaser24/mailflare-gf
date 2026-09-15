@@ -115,7 +115,7 @@ export const mailboxes = pgTable(
 		autoReplyBody: text("auto_reply_body").notNull().default(""),
 		avatarKey: text("avatar_key"),
 		type: text("type", { enum: ["personal", "shared"] }).notNull().default("personal"),
-		useAllDomains: boolean("use_all_domains").notNull().default(true),
+		useAllDomains: boolean("use_all_domains").notNull().default(false),
 		/**
 		 * The inbox is operated by an automated agent (Cloudflare Email Service /
 		 * Agents SDK), so nobody can type a code for it. Two-factor authentication

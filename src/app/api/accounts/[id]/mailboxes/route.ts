@@ -87,7 +87,7 @@ export const POST = withOrg<AccountRouteParams>(async (ctx, request, { params })
 		await ensureMailboxDomainRouting(
 			env,
 			db,
-			{ id, domainId: domain.id, localPart, useAllDomains: true },
+			{ id, domainId: domain.id, localPart, useAllDomains: false },
 			ctx.orgId,
 		);
 	} catch (err) {

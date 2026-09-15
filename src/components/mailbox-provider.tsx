@@ -10,6 +10,7 @@ import {
 import type { ReactNode } from "react";
 import {
 	fetchMailboxOptions,
+	SELECT_MAILBOX_EVENT,
 	SELECTED_MAILBOX_STORAGE_KEY,
 } from "./mailbox-provider-utils";
 import {
@@ -96,6 +97,36 @@ export function MailboxProvider({ children }: { children: ReactNode }) {
 
 		window.addEventListener(AUTH_SESSION_CHANGED_EVENT, resetMailboxState);
 		return () => window.removeEventListener(AUTH_SESSION_CHANGED_EVENT, resetMailboxState);
+	}, []);
+
+	// The new-mail popup asks for a mailbox by id (see `requestMailboxSelection`).
+	// A mailbox the provider has not loaded yet (an admin's first event from a
+	// freshly created inbox) triggers one forced refetch.
+	useEffect(() => {
+		let cancelled = false;
+		function onSelectRequest(event: Event) {
+			const mailboxId = (event as CustomEvent<{ mailboxId?: string }>).detail?.mailboxId;
+			if (!mailboxId) return;
+			setMailboxes((items) => {
+				const found = items.find((mb) => mb.id === mailboxId);
+				if (found) {
+					setSelectedMailboxState(found);
+					return items;
+				}
+				void fetchMailboxOptions(true).then((fresh) => {
+					if (cancelled) return;
+					setMailboxes(fresh);
+					const match = fresh.find((mb) => mb.id === mailboxId);
+					if (match) setSelectedMailboxState(match);
+				});
+				return items;
+			});
+		}
+		window.addEventListener(SELECT_MAILBOX_EVENT, onSelectRequest);
+		return () => {
+			cancelled = true;
+			window.removeEventListener(SELECT_MAILBOX_EVENT, onSelectRequest);
+		};
 	}, []);
 
 	const setSelectedMailbox = useCallback((mb: MailboxOption | null) => {
